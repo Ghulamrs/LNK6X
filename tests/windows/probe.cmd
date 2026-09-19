@@ -41,6 +41,17 @@ for /f "usebackq tokens=1,2,3,* delims=|" %%a in ("%PROBES%\links.txt") do (
     )
 )
 
+rem  q10: an archive of exactly two members, one of them never referenced. TI's own runtime
+rem  answers this too (q07), but not in isolation and not with a marker to look for.
+ar6x -r q10.lib q10-ar-used.obj q10-ar-unused.obj > q10.lib.log 2>&1 || (echo AR-FAILED & set fail=1)
+if exist q10.lib ofd6x -x -o=q10.lib.xml q10.lib > nul 2>&1
+lnk6x %MV% -i %TILIB% %CMDS%\flat.cmd q10-ar-main.obj q10.lib --ram_model -o q10-ar.out -m q10-ar.map > q10-ar.lnk 2>&1 || (echo LINK-FAILED q10-ar & set fail=1)
+if exist q10-ar.out (
+    ofd6x -x -o=q10-ar.out.xml q10-ar.out > nul 2>&1
+    dis6x q10-ar.out > q10-ar.out.dis 2>&1
+    nm6x q10-ar.out > q10-ar.out.nm 2>&1
+)
+
 rem  the versions that made all this, so a difference later can be dated
 cl6x --compiler_revision > versions.txt 2>&1
 lnk6x --help 2>&1 | findstr /C:"Version" >> versions.txt

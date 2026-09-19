@@ -16,3 +16,10 @@ q05-model-rom|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q05-model
 q06-near|split.cmd|--ram_model|q06-near
 q07-lib|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q07-lib
 q08-runload|runload.cmd|--ram_model|q08-runload
+; q09: subsections, once with the command file naming one of them and once with it saying
+; nothing, so the rule and the default can be told apart
+q09-subsect-flat|flat.cmd|--ram_model|q09-subsect
+q09-subsect-named|subsect.cmd|--ram_model|q09-subsect
+; q01 linked a second time under its own name: cmp of the two says whether lnk6x is
+; deterministic, which decides whether a checked-in image can be a regression test at all
+q01-bare-again|flat.cmd|--ram_model|q01-bare

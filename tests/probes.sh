@@ -24,5 +24,15 @@ for f in "$T"/*.out; do
     [ -e "$f" ] || continue
     printf '%-20s %8d bytes\n' "$(basename "$f")" "$(wc -c < "$f")"
 done
+# determinism: the same input linked twice under two names. If the two images differ, a
+# checked-in image cannot be a regression test on its own and whatever differs has to be
+# neutralised first - the PE side has a time-date stamp and a Rich header for exactly this reason.
+if [ -f "$T/q01-bare-flat.out" ] && [ -f "$T/q01-bare-again.out" ]; then
+    if cmp -s "$T/q01-bare-flat.out" "$T/q01-bare-again.out"; then
+        echo "determinism: lnk6x wrote the same bytes twice"
+    else
+        echo "determinism: the two links DIFFER - $(cmp "$T/q01-bare-flat.out" "$T/q01-bare-again.out" 2>&1 | head -1)"
+    fi
+fi
 echo "probes.sh: results in $T"
 exit $rc
