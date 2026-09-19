@@ -7,7 +7,12 @@ q02-place-split|split.cmd|--ram_model|q02-place
 q03-bss|flat.cmd|--ram_model|q03-bss
 q04-cross|flat.cmd|--ram_model|q04-cross-a q04-cross-b
 q05-model-ram|flat.cmd|--ram_model|q05-model
-q05-model-rom|flat.cmd|--rom_model|q05-model
+; --rom_model cannot link without the runtime: every cinit record names its decompressor, and
+; those live in the library - a bare rom-model link stops on __TI_decompress_none and
+; __TI_decompress_rle24, and with --cinit_compression=off still on __TI_decompress_none (both
+; seen on the box 2026-09-20). So the rom half of this pair links the library, which is what
+; the model means: the cinit table is the boot code's to read. The ram half links nothing.
+q05-model-rom|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q05-model
 q06-near|split.cmd|--ram_model|q06-near
 q07-lib|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q07-lib
 q08-runload|runload.cmd|--ram_model|q08-runload
