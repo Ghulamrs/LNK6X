@@ -1,0 +1,13 @@
+; Each line is one link: the image's name | the linker command file | the flags beyond the
+; common ones | the objects. Lines beginning with a semicolon are comments, as for.exe skips
+; them. The common part, added by probe.cmd, is: -mv6740 --abi=eabi -i <tilib> -m <name>.map
+q01-bare-flat|flat.cmd|--ram_model|q01-bare
+q02-place-flat|flat.cmd|--ram_model|q02-place
+q02-place-split|split.cmd|--ram_model|q02-place
+q03-bss|flat.cmd|--ram_model|q03-bss
+q04-cross|flat.cmd|--ram_model|q04-cross-a q04-cross-b
+q05-model-ram|flat.cmd|--ram_model|q05-model
+q05-model-rom|flat.cmd|--rom_model|q05-model
+q06-near|split.cmd|--ram_model|q06-near
+q07-lib|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q07-lib
+q08-runload|runload.cmd|--ram_model|q08-runload
