@@ -36,3 +36,18 @@ q15-far|far.cmd|--ram_model|q15-far
 ; q16: RIDE's own command file (tests/cmd/ride.cmd is kTiLinkCmd) on q04, --rom_model with the
 ; runtime: the shape of the image RIDE actually asks for, .vm6747.eh and all
 q16-ride|ride.cmd|-l rts6740_elf_eh.lib|q04-cross-a q04-cross-b
+; q17: the same program linked from two ranges 0x1234000 apart. Every symbol, every section
+; base and every instruction address shifts by that much, so a relocation field that follows
+; the target and one that follows the reference can be told apart by arithmetic. PCR_L16 and
+; PCR_H16 are what this is for: three sites in the runtime fit neither S+A-P nor S+A-(P&~31),
+; and docs/known.md has the measurement that says so.
+q17-pcr-here|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q07-lib
+q17-pcr-moved|moved.cmd|--rom_model -l rts6740_elf_eh.lib|q07-lib
+; q18: two runs of initialised data, one compressible and one not, under --rom_model with the
+; runtime: the cinit table, the handler table and whatever compression lnk6x chose, in an
+; image small enough to read by hand.
+q18-cinit|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q18-cinit
+; q19: six sections of six sizes, named in a third order again, so that what decides the
+; allocation order can be read rather than inferred from q07.
+q19-order-flat|flat.cmd|--ram_model|q19-order
+q19-order-named|order.cmd|--ram_model|q19-order
