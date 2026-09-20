@@ -15,7 +15,7 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
     if (p[4] != 1 || p[5] != 1) { err = name + ": not 32-bit little-endian"; return false; }
     u16 machine = rd16(p + 18);
     if (machine != 140) {
-        char b[64]; sprintf(b, ": machine %u, not the C6000's 140", machine);
+        char b[64]; snprintf(b, sizeof b, ": machine %u, not the C6000's 140", machine);
         err = name + b; return false;
     }
     u32 shoff = rd32(p + 32);

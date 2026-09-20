@@ -37,7 +37,7 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
     case R_C6000_PCR_S10: field(p, (V - (P & ~0x1Fu)) >> 2, 13, 10); break;
     case R_C6000_PCR_S7:  field(p, (V - (P & ~0x1Fu)) >> 2, 16, 7); break;
     default: {
-        char b[64]; sprintf(b, "relocation type %u is not handled", type);
+        char b[64]; snprintf(b, sizeof b, "relocation type %u is not handled", type);
         err = b; return false;
     }
     }

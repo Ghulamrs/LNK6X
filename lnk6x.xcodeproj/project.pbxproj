@@ -1,0 +1,279 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4D6BDDC087D6CFCF3E457749 /* src/cmd.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0A1F9B70C19B78C8290BFC02 /* src/cmd.cpp */; };
+		6281D6CDBA155D91EA0B6B0A /* src/elf.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 236A46AF7BF9358DB4F886E2 /* src/elf.cpp */; };
+		CCFFF50A51F72DF7DBE5EC72 /* src/image.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B1DDA37ADA0230E769191D92 /* src/image.cpp */; };
+		D65FD3A033469E7A4B062F75 /* src/link.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7E578DDB7DD3CE97F28BB0FA /* src/link.cpp */; };
+		6C7C9D55A24985AC5109AFEA /* src/main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 849135D83D1048E6566E2913 /* src/main.cpp */; };
+		8942550244FA4ADC5507BEC4 /* src/reloc.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 43918D244A49BC80A08F1F67 /* src/reloc.cpp */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0A1F9B70C19B78C8290BFC02 /* src/cmd.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/cmd.cpp; sourceTree = "<group>"; };
+		236A46AF7BF9358DB4F886E2 /* src/elf.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/elf.cpp; sourceTree = "<group>"; };
+		B1DDA37ADA0230E769191D92 /* src/image.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/image.cpp; sourceTree = "<group>"; };
+		7E578DDB7DD3CE97F28BB0FA /* src/link.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/link.cpp; sourceTree = "<group>"; };
+		849135D83D1048E6566E2913 /* src/main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/main.cpp; sourceTree = "<group>"; };
+		43918D244A49BC80A08F1F67 /* src/reloc.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = src/reloc.cpp; sourceTree = "<group>"; };
+		A94DCE749F160013BC191A06 /* src/lnk.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = src/lnk.h; sourceTree = "<group>"; };
+		A733BF72187A73EC1DC8F617 /* lnk6x.exe */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = lnk6x.exe; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1D378BD451341B1EE2E362B5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0DEA05EA6A801AB806EAD44C = {
+			isa = PBXGroup;
+			children = (
+				8ADE37152D49CB9758C49781 /* Sources */,
+				BCB12DC4DB94839A4E134402 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		8ADE37152D49CB9758C49781 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				0A1F9B70C19B78C8290BFC02 /* src/cmd.cpp */,
+				236A46AF7BF9358DB4F886E2 /* src/elf.cpp */,
+				B1DDA37ADA0230E769191D92 /* src/image.cpp */,
+				7E578DDB7DD3CE97F28BB0FA /* src/link.cpp */,
+				849135D83D1048E6566E2913 /* src/main.cpp */,
+				43918D244A49BC80A08F1F67 /* src/reloc.cpp */,
+				A94DCE749F160013BC191A06 /* src/lnk.h */,
+			);
+			name = Sources;
+			sourceTree = "<group>";
+		};
+		BCB12DC4DB94839A4E134402 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A733BF72187A73EC1DC8F617 /* lnk6x.exe */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0AF269B5D180058A3A373CDD /* lnk6x.exe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 63C80F1C6CE5B5B67DB0FC51;
+			buildPhases = (
+				DD5F3DA6E94A4F8FAD941ABA /* Sources */,
+				1D378BD451341B1EE2E362B5 /* Frameworks */,
+				6C0350329A4FE0E270002E82 /* put the finished program in RStudio's directory */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = lnk6x.exe;
+			productName = lnk6x.exe;
+			productReference = A733BF72187A73EC1DC8F617 /* lnk6x.exe */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		893AE4EA26BFC20A93D30F8D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 7F1E155B1CFBD9221DACAD5D;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 0DEA05EA6A801AB806EAD44C;
+			productRefGroup = BCB12DC4DB94839A4E134402 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0AF269B5D180058A3A373CDD /* lnk6x.exe */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		6C0350329A4FE0E270002E82 /* put the finished program in RStudio's directory */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "put the finished program in RStudio's directory";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\ndest=\"$SRCROOT/../RIDE\"\nmkdir -p \"$dest\"\ncp -f \"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME\" \"$dest/.$PRODUCT_NAME.new\"\nmv -f \"$dest/.$PRODUCT_NAME.new\" \"$dest/$PRODUCT_NAME\"\ncodesign --force --sign - \"$dest/$PRODUCT_NAME\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DD5F3DA6E94A4F8FAD941ABA /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D6BDDC087D6CFCF3E457749 /* src/cmd.cpp in Sources */,
+				6281D6CDBA155D91EA0B6B0A /* src/elf.cpp in Sources */,
+				CCFFF50A51F72DF7DBE5EC72 /* src/image.cpp in Sources */,
+				D65FD3A033469E7A4B062F75 /* src/link.cpp in Sources */,
+				6C7C9D55A24985AC5109AFEA /* src/main.cpp in Sources */,
+				8942550244FA4ADC5507BEC4 /* src/reloc.cpp in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		27B80717E3C5F7B78AF12B21 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				OBJROOT = "$(TMPDIR)/rstudio-xcode";
+				SYMROOT = "$(TMPDIR)/rstudio-xcode";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_IMPLICIT_SIGN_CONVERSION = NO;
+				CODE_SIGN_STYLE = Automatic;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_NAME = lnk6x.exe;
+				SDKROOT = macosx;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/src";
+				WARNING_CFLAGS = (
+					"-Wall",
+					"-Wextra",
+					"-pedantic",
+				);
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_OPTIMIZATION_LEVEL = 0;
+			};
+			name = Debug;
+		};
+		F63FF7073A4B930E71D73688 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				OBJROOT = "$(TMPDIR)/rstudio-xcode";
+				SYMROOT = "$(TMPDIR)/rstudio-xcode";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_IMPLICIT_SIGN_CONVERSION = NO;
+				CODE_SIGN_STYLE = Automatic;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_NAME = lnk6x.exe;
+				SDKROOT = macosx;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/src";
+				WARNING_CFLAGS = (
+					"-Wall",
+					"-Wextra",
+					"-pedantic",
+				);
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_OPTIMIZATION_LEVEL = 2;
+			};
+			name = Release;
+		};
+		B14C3F5DB76FC2907673C94E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				OBJROOT = "$(TMPDIR)/rstudio-xcode";
+				SYMROOT = "$(TMPDIR)/rstudio-xcode";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_IMPLICIT_SIGN_CONVERSION = NO;
+				CODE_SIGN_STYLE = Automatic;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_NAME = lnk6x.exe;
+				SDKROOT = macosx;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/src";
+				WARNING_CFLAGS = (
+					"-Wall",
+					"-Wextra",
+					"-pedantic",
+				);
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_OPTIMIZATION_LEVEL = 0;
+			};
+			name = Debug;
+		};
+		69C983B5E3CB13DB2AB1D8F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				OBJROOT = "$(TMPDIR)/rstudio-xcode";
+				SYMROOT = "$(TMPDIR)/rstudio-xcode";
+				CLANG_CXX_LANGUAGE_STANDARD = "c++14";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_IMPLICIT_SIGN_CONVERSION = NO;
+				CODE_SIGN_STYLE = Automatic;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = NO;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
+				PRODUCT_NAME = lnk6x.exe;
+				SDKROOT = macosx;
+				USER_HEADER_SEARCH_PATHS = "$(SRCROOT)/src";
+				WARNING_CFLAGS = (
+					"-Wall",
+					"-Wextra",
+					"-pedantic",
+				);
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_OPTIMIZATION_LEVEL = 2;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		7F1E155B1CFBD9221DACAD5D /* project */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27B80717E3C5F7B78AF12B21 /* Debug */,
+				F63FF7073A4B930E71D73688 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		63C80F1C6CE5B5B67DB0FC51 /* target */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B14C3F5DB76FC2907673C94E /* Debug */,
+				69C983B5E3CB13DB2AB1D8F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 893AE4EA26BFC20A93D30F8D /* Project object */;
+}
