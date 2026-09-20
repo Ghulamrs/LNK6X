@@ -52,6 +52,11 @@ if exist q10-ar.out (
     nm6x q10-ar.out > q10-ar.out.nm 2>&1
 )
 
+rem  the runtime the two library probes link against. It is TI's, not this project's, so it is
+rem  not checked in - but the Mac side cannot link q05-model-rom or q07 without it, and copying
+rem  it back beside the objects is what lets tests\run.sh compare every image rather than eight.
+copy /y "%TILIB%\rts6740_elf_eh.lib" . >nul 2>&1 || echo NO-RTS
+
 rem  the versions that made all this, so a difference later can be dated
 cl6x --compiler_revision > versions.txt 2>&1
 lnk6x --help 2>&1 | findstr /C:"Version" >> versions.txt

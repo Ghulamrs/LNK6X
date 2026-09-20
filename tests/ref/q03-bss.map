@@ -1,0 +1,88 @@
+******************************************************************************
+               TMS320C6x Linker PC v8.2.2                      
+******************************************************************************
+>> Linked Sun Sep 20 00:17:58 2026
+
+OUTPUT FILE NAME:   <q03-bss.out>
+ENTRY POINT SYMBOL: "_c_int00"  address: c0000100
+
+
+MEMORY CONFIGURATION
+
+         name            origin    length      used     unused   attr    fill
+----------------------  --------  ---------  --------  --------  ----  --------
+  RAM                   c0000000   04000000  00000130  03fffed0  RWIX
+
+
+SEGMENT ALLOCATION MAP
+
+run origin  load origin   length   init length attrs members
+----------  ----------- ---------- ----------- ----- -------
+c0000000    c0000000    00000100   00000000    rw-
+  c0000000    c0000000    00000100   00000000    rw- .bss
+c0000100    c0000100    00000020   00000020    r-x
+  c0000100    c0000100    00000020   00000020    r-x .text
+c0000120    c0000120    00000010   00000000    rw-
+  c0000120    c0000120    00000010   00000000    rw- .far
+
+
+SECTION ALLOCATION MAP
+
+ output                                  attributes/
+section   page    origin      length       input sections
+--------  ----  ----------  ----------   ----------------
+.text      0    c0000100    00000020     
+                  c0000100    00000020     q03-bss.obj (.text)
+
+.bss       0    c0000000    00000100     UNINITIALIZED
+                  c0000000    00000100     q03-bss.obj (.bss)
+
+.far       0    c0000120    00000010     UNINITIALIZED
+                  c0000120    00000010     q03-bss.obj (.far)
+
+.cinit     0    c0000000    00000000     UNINITIALIZED
+
+.init_array 
+*          0    c0000000    00000000     UNINITIALIZED
+
+MODULE SUMMARY
+
+       Module         code   ro data   rw data
+       ------         ----   -------   -------
+    <current directory>
+       q03-bss.obj    32     0         272    
+    +--+--------------+------+---------+---------+
+       Total:         32     0         272    
+                                              
+    +--+--------------+------+---------+---------+
+       Grand Total:   32     0         272    
+
+
+GLOBAL SYMBOLS: SORTED ALPHABETICALLY BY Name 
+
+address   name                
+-------   ----                
+c0000000  __TI_STATIC_BASE    
+ffffffff  __TI_pprof_out_hndl 
+ffffffff  __TI_prof_data_size 
+ffffffff  __TI_prof_data_start
+ffffffff  __binit__           
+ffffffff  __c_args__          
+c0000100  _c_int00            
+ffffffff  binit               
+
+
+GLOBAL SYMBOLS: SORTED BY Symbol Address 
+
+address   name                
+-------   ----                
+c0000000  __TI_STATIC_BASE    
+c0000100  _c_int00            
+ffffffff  __TI_pprof_out_hndl 
+ffffffff  __TI_prof_data_size 
+ffffffff  __TI_prof_data_start
+ffffffff  __binit__           
+ffffffff  __c_args__          
+ffffffff  binit               
+
+[8 symbols]
