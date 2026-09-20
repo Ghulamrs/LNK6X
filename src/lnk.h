@@ -159,7 +159,7 @@ struct Link {
 
     bool run();
     bool read_inputs();
-    void take_module(int mi);
+    bool take_module(int mi);
     void add_linker_symbols();
     void set_linker_symbols();
     bool eliminate();

@@ -20,6 +20,7 @@ designed before its output has been read.
     src/main.cpp        the command line, in lnk6x's spelling
     tests/ref/          the objects, the images and the maps lnk6x made: the bed's input
     tests/run.sh        links every probe again and compares the image byte for byte
+    tests/bad.sh        what the linker says when it will not make an image at all
     tests/probes/       the probes: the smallest input that forces one linker decision each
     tests/cmd/          linker command files - TI's kind, not cmd.exe's
     tests/windows/      what has to run on the box (cl6x, lnk6x, ofd6x, dis6x, nm6x)
@@ -30,7 +31,7 @@ designed before its output has been read.
 ## Building and testing
 
     make                                    -> build/lnk6x.exe
-    make test                               -> tests/run.sh
+    make test                               -> tests/run.sh, then tests/bad.sh
 
 The test is the comparison: each probe is linked again from the objects in `tests/ref` and the
 image is held against lnk6x's, byte for byte. A TI image carries no time stamp and no build

@@ -72,7 +72,7 @@ static std::string basename_of(const std::string &p)
  *  go into the table. A strong definition wins over a weak one wherever it is met - q14 links
  *  the weak object first and lnk6x still gives `wk` the strong object's address - and two
  *  weak definitions keep the first. */
-void Link::take_module(int mi)
+bool Link::take_module(int mi)
 {
     for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = mi;
     for (size_t k = 0; k < mods[mi].syms.size(); k++) {
@@ -82,9 +82,20 @@ void Link::take_module(int mi)
         std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
         if (d == defined.end()) { defined[y.name] = std::make_pair(mi, (int)k); continue; }
         const Sym &had = mods[d->second.first].syms[d->second.second];
-        if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL)
+        if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL) {
             d->second = std::make_pair(mi, (int)k);
+            continue;
+        }
+        if ((had.info >> 4) == STB_GLOBAL && (y.info >> 4) == STB_GLOBAL) {
+            /*  Two strong definitions of one name. lnk6x says "symbol redefined" and stops;
+             *  this linker kept the first and said nothing, so two objects that both defined
+             *  _c_int00 linked quietly (the review's N16). */
+            err = "symbol redefined: " + y.name + ", in " +
+                  mods[d->second.first].name + " and in " + mods[mi].name;
+            return false;
+        }
     }
+    return true;
 }
 
 bool Link::read_inputs()
@@ -112,7 +123,7 @@ bool Link::read_inputs()
         if (!elf_read(b.empty() ? (const u8 *)"" : &b[0], b.size(), basename_of(path), m, err)) return false;
         mods.push_back(m);
     }
-    for (size_t mi = 0; mi < mods.size(); mi++) take_module((int)mi);
+    for (size_t mi = 0; mi < mods.size(); mi++) if (!take_module((int)mi)) return false;
     if (libs.empty()) { add_linker_symbols(); return true; }
 
     /*  Then the archives, in passes. One pass takes every member the current undefined set
@@ -153,7 +164,7 @@ bool Link::read_inputs()
                 if (!ar.member(pull[k], m, err)) return false;
                 ar.taken.push_back(pull[k]);
                 mods.push_back(m);
-                take_module((int)mods.size() - 1);
+                if (!take_module((int)mods.size() - 1)) return false;
                 took = true;
             }
         }
@@ -207,6 +218,7 @@ void Link::add_linker_symbols()
     m.file_sym = -1;
     m.syms.push_back(Sym());                /* the null symbol every module's table starts with */
     for (int i = 0; always[i]; i++) {
+        if (defined.find(always[i]) != defined.end()) continue;   /* an object got there first */
         Sym y;
         y.name = always[i]; y.value = 0xFFFFFFFFu;
         y.info = (u8)((STB_GLOBAL << 4) | STT_NOTYPE); y.other = 2; y.shndx = SHN_ABS;
@@ -224,7 +236,7 @@ void Link::add_linker_symbols()
     }
     mods.push_back(m);
     lnk_mod = (int)mods.size() - 1;
-    take_module(lnk_mod);
+    take_module(lnk_mod);      /* its names were all absent, so this cannot find a duplicate */
 }
 
 /*  Their values, once the sections have addresses. `.stack` and `.sysmem` are the linker's
