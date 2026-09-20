@@ -142,6 +142,7 @@ struct Link {
 
     bool run();
     bool read_inputs();
+    void take_module(int mi);
     bool eliminate();
     bool build_sections();
     bool allocate();
@@ -153,6 +154,21 @@ struct Link {
 
 /* elf.cpp */
 bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::string &err);
+
+/* archive.cpp */
+struct Archive {
+    std::string name;
+    std::vector<u8> bytes;
+    std::vector<std::pair<std::string, u32> > index;   /* symbol -> the member's offset */
+    std::vector<u32> taken;                            /* members already pulled */
+    size_t longnames_at;                               /* the `//` member's data, 0 when none */
+    Archive() : longnames_at(0) {}
+    bool load(const std::string &path, std::string &err);
+    bool member(u32 off, Module &m, std::string &err) const;
+};
+
+/* where a `-l name` is looked for: as given, then each `-i` directory in order */
+std::string find_library(const Options &o, const std::string &nm);
 
 /* reloc.cpp */
 bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err);

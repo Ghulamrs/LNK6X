@@ -68,30 +68,96 @@ static std::string basename_of(const std::string &p)
     return (s == std::string::npos) ? p : p.substr(s + 1);
 }
 
+/*  What one module brings: its sections get their module number, and its global definitions
+ *  go into the table. A strong definition wins over a weak one wherever it is met - q14 links
+ *  the weak object first and lnk6x still gives `wk` the strong object's address - and two
+ *  weak definitions keep the first. */
+void Link::take_module(int mi)
+{
+    for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = mi;
+    for (size_t k = 0; k < mods[mi].syms.size(); k++) {
+        const Sym &y = mods[mi].syms[k];
+        if ((y.info >> 4) == STB_LOCAL || y.name.empty()) continue;
+        if (y.shndx == SHN_UNDEF) continue;
+        std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
+        if (d == defined.end()) { defined[y.name] = std::make_pair(mi, (int)k); continue; }
+        const Sym &had = mods[d->second.first].syms[d->second.second];
+        if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL)
+            d->second = std::make_pair(mi, (int)k);
+    }
+}
+
 bool Link::read_inputs()
 {
+    /*  The command line's objects, in its order - that order is the layout order - and its
+     *  archives kept aside. A `-l name` is looked for through the `-i` directories; a name
+     *  given with a directory, or an object, is opened as it stands. */
+    std::vector<Archive> libs;
     for (size_t i = 0; i < opt.inputs.size(); i++) {
+        std::string path = opt.inputs[i];
         std::vector<u8> b;
-        if (!slurp(opt.inputs[i], b, err)) return false;
+        if (!slurp(path, b, err)) {
+            std::string found = find_library(opt, opt.inputs[i]);
+            if (found.empty()) { err = opt.inputs[i] + ": cannot open"; return false; }
+            path = found;
+            if (!slurp(path, b, err)) return false;
+        }
+        if (b.size() >= 8 && memcmp(&b[0], "!<arch>\n", 8) == 0) {
+            Archive a;
+            if (!a.load(path, err)) return false;
+            libs.push_back(a);
+            continue;
+        }
         Module m;
-        if (!elf_read(b.empty() ? (const u8 *)"" : &b[0], b.size(), basename_of(opt.inputs[i]), m, err)) return false;
+        if (!elf_read(b.empty() ? (const u8 *)"" : &b[0], b.size(), basename_of(path), m, err)) return false;
         mods.push_back(m);
     }
-    for (size_t mi = 0; mi < mods.size(); mi++) {
-        for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = (int)mi;
-        for (size_t k = 0; k < mods[mi].syms.size(); k++) {
-            const Sym &y = mods[mi].syms[k];
-            if ((y.info >> 4) == STB_LOCAL || y.name.empty()) continue;
-            if (y.shndx == SHN_UNDEF) continue;
-            std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
-            if (d == defined.end()) { defined[y.name] = std::make_pair((int)mi, (int)k); continue; }
-            /*  A strong definition wins over a weak one wherever it is met: q14 links the
-             *  weak object first and lnk6x still gives `wk` the strong object's address. Two
-             *  weak definitions keep the first. */
-            const Sym &had = mods[d->second.first].syms[d->second.second];
-            if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL)
-                d->second = std::make_pair((int)mi, (int)k);
+    for (size_t mi = 0; mi < mods.size(); mi++) take_module((int)mi);
+    if (libs.empty()) return true;
+
+    /*  Then the archives, in passes. One pass takes every member the current undefined set
+     *  names; the members it take may ask for more, which the next pass answers. The entry
+     *  point is asked for first, since with a runtime it is the library that has it. A weak
+     *  undefined name does not pull a member - that is what weak means - which is why the
+     *  runtime's optional hooks do not drag their implementations in. */
+    std::map<std::string, bool> weak_only;
+    for (;;) {
+        std::vector<std::string> want;
+        std::map<std::string, bool> asked;
+        if (defined.find(opt.entry) == defined.end()) { want.push_back(opt.entry); asked[opt.entry] = true; }
+        for (size_t mi = 0; mi < mods.size(); mi++)
+            for (size_t k = 0; k < mods[mi].syms.size(); k++) {
+                const Sym &y = mods[mi].syms[k];
+                if (y.shndx != SHN_UNDEF || y.name.empty()) continue;
+                if ((y.info >> 4) != STB_GLOBAL) { weak_only[y.name] = true; continue; }
+                if (defined.find(y.name) != defined.end() || asked[y.name]) continue;
+                asked[y.name] = true;
+                want.push_back(y.name);
+            }
+        bool took = false;
+        for (size_t a = 0; a < libs.size(); a++) {
+            Archive &ar = libs[a];
+            std::vector<u32> pull;
+            for (size_t u = 0; u < want.size(); u++) {
+                if (defined.find(want[u]) != defined.end()) continue;
+                for (size_t k = 0; k < ar.index.size(); k++) {
+                    if (ar.index[k].first != want[u]) continue;
+                    u32 off = ar.index[k].second;
+                    if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) break;
+                    if (std::find(pull.begin(), pull.end(), off) == pull.end()) pull.push_back(off);
+                    break;
+                }
+            }
+            for (size_t k = 0; k < pull.size(); k++) {
+                Module m;
+                if (!ar.member(pull[k], m, err)) return false;
+                ar.taken.push_back(pull[k]);
+                mods.push_back(m);
+                take_module((int)mods.size() - 1);
+                took = true;
+            }
         }
+        if (!took) break;
     }
     return true;
 }
