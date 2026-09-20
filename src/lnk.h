@@ -106,7 +106,13 @@ struct Cmd {
     std::vector<Range>   mem;
     std::vector<SecSpec> secs;
     u32 stack_size, heap_size;
-    Cmd() : stack_size(0), heap_size(0) {}
+    /*  Options written inside the command file. RIDE's kTiLinkCmd puts --rom_model on its
+     *  second line, and a linker that reads options only from its command line links RIDE's
+     *  programs as --ram_model without saying so (the review's N4). 0 = the file said
+     *  nothing, 1 = --ram_model, 2 = --rom_model. */
+    int model;
+    std::string entry;
+    Cmd() : stack_size(0), heap_size(0), model(0) {}
     bool parse(const std::string &path, std::string &err);
     Range *range(const std::string &name);
 };
@@ -132,7 +138,9 @@ struct Options {
     std::vector<std::string> inputs;
     std::vector<std::string> libdirs;
     bool ram_model, rom_model, verbose;
-    Options() : entry("_c_int00"), ram_model(true), rom_model(false), verbose(false) {}
+    bool model_given, entry_given;       /* whether the command line said so itself */
+    Options() : entry("_c_int00"), ram_model(true), rom_model(false), verbose(false),
+                model_given(false), entry_given(false) {}
 };
 
 struct Link {

@@ -11,6 +11,19 @@
 bool Link::run()
 {
     if (!cmd.parse(opt.cmdfile, err)) return false;
+    /*  What the command file said, where the command line did not say it itself. RIDE writes
+     *  the model into the file and passes none on the line. Which of the two wins when both
+     *  speak is not something the bed shows; the line is taken to, as the nearer word. */
+    if (!opt.model_given && cmd.model) {
+        opt.rom_model = (cmd.model == 2);
+        opt.ram_model = !opt.rom_model;
+    }
+    if (!opt.entry_given && !cmd.entry.empty()) opt.entry = cmd.entry;
+    /*  --rom_model asks for a .cinit table this linker does not compose yet, so say so
+     *  rather than write a ram-model image under a rom-model name (the review's N9). */
+    if (opt.rom_model)
+        fprintf(stderr, "lnk6x: --rom_model: no .cinit table is composed yet - the image is "
+                        "laid out as for --ram_model and its cinit bounds are empty\n");
     if (!read_inputs())    return false;
     if (!eliminate())      return false;
     if (!build_sections()) return false;
@@ -31,10 +44,10 @@ int main(int argc, char **argv)
         if (a == "-m" && i + 1 < argc)      { lk.opt.map = argv[++i]; continue; }
         if (a == "-i" && i + 1 < argc)      { lk.opt.libdirs.push_back(argv[++i]); continue; }
         if (starts(a, "-i"))                { lk.opt.libdirs.push_back(a.substr(2)); continue; }
-        if (a == "-e" && i + 1 < argc)      { lk.opt.entry = argv[++i]; continue; }
-        if (starts(a, "--entry_point="))    { lk.opt.entry = a.substr(14); continue; }
-        if (a == "--ram_model")             { lk.opt.ram_model = true;  lk.opt.rom_model = false; continue; }
-        if (a == "--rom_model")             { lk.opt.rom_model = true;  lk.opt.ram_model = false; continue; }
+        if (a == "-e" && i + 1 < argc)      { lk.opt.entry = argv[++i]; lk.opt.entry_given = true; continue; }
+        if (starts(a, "--entry_point="))    { lk.opt.entry = a.substr(14); lk.opt.entry_given = true; continue; }
+        if (a == "--ram_model")             { lk.opt.ram_model = true;  lk.opt.rom_model = false; lk.opt.model_given = true; continue; }
+        if (a == "--rom_model")             { lk.opt.rom_model = true;  lk.opt.ram_model = false; lk.opt.model_given = true; continue; }
         if (a == "--verbose" || a == "-v")  { lk.opt.verbose = true; continue; }
         if (starts(a, "-mv") || starts(a, "--abi=") || a == "-c" || a == "-cr"
             || a == "--no_compress" || starts(a, "--diag")) continue;

@@ -122,15 +122,24 @@ bool Cmd::parse(const std::string &path, std::string &err)
             if (v.empty() && lx.peek() == "=") { lx.next(); v = lx.next(); }
             if (k == "--stack_size") stack_size = number(v);
             else if (k == "--heap_size") heap_size = number(v);
-            /* other options are the command line's business, not this file's */
+            else if (k == "--ram_model") model = 1;
+            else if (k == "--rom_model") model = 2;
+            else if (k == "--entry_point") entry = v.empty() ? lx.next() : v;
+            /*  Everything else in the file is read and left alone: --trampolines,
+             *  --diag_*, and the rest have no effect on an image this linker writes yet. */
             continue;
         }
 
         if (t == "MEMORY") {
             if (lx.next() != "{") { err = path + ": MEMORY without a brace"; return false; }
+            bool closed = false;
             for (;;) {
                 std::string name = lx.next();
-                if (name == "}" || name.empty()) break;
+                if (name == "}") { closed = true; break; }
+                /*  The file ended inside the block. Before this the loop simply stopped and
+                 *  the refusal arrived much later as `.text: no memory range for it`, which
+                 *  names the wrong thing entirely (the review's N17). */
+                if (name.empty()) break;
                 Range r; r.name = name; r.origin = r.length = r.used = 0;
                 if (lx.next() != ":") { err = path + ": " + name + ": expected a colon"; return false; }
                 for (;;) {
@@ -147,14 +156,17 @@ bool Cmd::parse(const std::string &path, std::string &err)
                 }
                 mem.push_back(r);
             }
+            if (!closed) { err = path + ": MEMORY block is not closed"; return false; }
             continue;
         }
 
         if (t == "SECTIONS") {
             if (lx.next() != "{") { err = path + ": SECTIONS without a brace"; return false; }
+            bool closed = false;
             for (;;) {
                 std::string name = lx.next();
-                if (name == "}" || name.empty()) break;
+                if (name == "}") { closed = true; break; }
+                if (name.empty()) break;
                 SecSpec sp;
                 sp.name = name;
                 sp.align = 0; sp.has_align = false;
@@ -202,6 +214,7 @@ bool Cmd::parse(const std::string &path, std::string &err)
                 }
                 secs.push_back(sp);
             }
+            if (!closed) { err = path + ": SECTIONS block is not closed"; return false; }
             continue;
         }
         /* anything else in the file is not something the bed asks for */
