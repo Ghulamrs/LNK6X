@@ -1,0 +1,3 @@
+8.2.2
+Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35228 for x64
+09/20/2026  06:13 PM           495,104 asm6x.exe

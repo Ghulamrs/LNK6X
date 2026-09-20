@@ -1,0 +1,137 @@
+******************************************************************************
+               TMS320C6x Linker PC v8.2.2                      
+******************************************************************************
+>> Linked Sun Sep 20 21:45:55 2026
+
+OUTPUT FILE NAME:   <q16-ride.out>
+ENTRY POINT SYMBOL: "_c_int00"  address: c00002c0
+
+
+MEMORY CONFIGURATION
+
+         name            origin    length      used     unused   attr    fill
+----------------------  --------  ---------  --------  --------  ----  --------
+  RAM                   c0000000   04000000  00000324  03fffcdc  RWIX
+
+
+SEGMENT ALLOCATION MAP
+
+run origin  load origin   length   init length attrs members
+----------  ----------- ---------- ----------- ----- -------
+c0000000    c0000000    00000300   00000300    r-x
+  c0000000    c0000000    00000300   00000300    r-x .text
+c0000300    c0000300    00000004   00000000    rw-
+  c0000300    c0000300    00000004   00000000    rw- .data
+c0000308    c0000308    00000020   00000020    r--
+  c0000308    c0000308    00000020   00000020    r-- .cinit
+
+
+SECTION ALLOCATION MAP
+
+ output                                  attributes/
+section   page    origin      length       input sections
+--------  ----  ----------  ----------   ----------------
+.text      0    c0000000    00000300     
+                  c0000000    00000100     rts6740_elf_eh.lib : copy_decompress_rle.obj (.text:__TI_decompress_rle_core)
+                  c0000100    000000e0                        : memset.obj (.text:memset)
+                  c00001e0    000000a0                        : memcpy64.obj (.text:memcpy)
+                  c0000280    00000020                        : copy_decompress_none.obj (.text:decompress:none:__TI_decompress_none)
+                  c00002a0    00000020                        : copy_decompress_rle.obj (.text:decompress:rle24:__TI_decompress_rle24)
+                  c00002c0    00000020     q04-cross-a.obj (.text)
+                  c00002e0    00000020     q04-cross-b.obj (.text)
+
+.data      0    c0000300    00000004     UNINITIALIZED
+                  c0000300    00000004     q04-cross-b.obj (.data)
+
+.cinit     0    c0000308    00000020     
+                  c0000308    0000000a     (.cinit..data.load) [load image, compression = rle]
+                  c0000312    00000002     --HOLE-- [fill = 0]
+                  c0000314    00000008     (__TI_handler_table)
+                  c000031c    00000004     --HOLE-- [fill = 0]
+                  c0000320    00000008     (__TI_cinit_table)
+
+.init_array 
+*          0    c0000000    00000000     UNINITIALIZED
+
+MODULE SUMMARY
+
+       Module                     code   ro data   rw data
+       ------                     ----   -------   -------
+    <current directory>
+       q04-cross-b.obj            32     0         4      
+       q04-cross-a.obj            32     0         0      
+    +--+--------------------------+------+---------+---------+
+       Total:                     64     0         4      
+                                                          
+    C:\Users\GRA\Documents\VM6747\tilib\rts6740_elf_eh.lib
+       copy_decompress_rle.obj    288    0         0      
+       memset.obj                 224    0         0      
+       memcpy64.obj               160    0         0      
+       copy_decompress_none.obj   32     0         0      
+    +--+--------------------------+------+---------+---------+
+       Total:                     704    0         0      
+                                                          
+       Linker Generated:          0      26        0      
+    +--+--------------------------+------+---------+---------+
+       Grand Total:               768    26        4      
+
+
+LINKER GENERATED COPY TABLES
+
+__TI_cinit_table @ c0000320 records: 1, size/record: 8, table size: 8
+	.data: load addr=c0000308, load size=0000000a bytes, run addr=c0000300, run size=00000004 bytes, compression=rle
+
+
+LINKER GENERATED HANDLER TABLE
+
+__TI_handler_table @ c0000314 records: 2, size/record: 4, table size: 8
+	index: 0, handler: __TI_decompress_rle24
+	index: 1, handler: __TI_decompress_none
+
+
+GLOBAL SYMBOLS: SORTED ALPHABETICALLY BY Name 
+
+address   name                    
+-------   ----                    
+c0000320  __TI_CINIT_Base         
+c0000328  __TI_CINIT_Limit        
+c0000314  __TI_Handler_Table_Base 
+c000031c  __TI_Handler_Table_Limit
+00000000  __TI_STATIC_BASE        
+c0000280  __TI_decompress_none    
+c00002a0  __TI_decompress_rle24   
+ffffffff  __TI_pprof_out_hndl     
+ffffffff  __TI_prof_data_size     
+ffffffff  __TI_prof_data_start    
+ffffffff  __binit__               
+ffffffff  __c_args__              
+c00002c0  _c_int00                
+ffffffff  binit                   
+c00002e0  helper                  
+c00001e0  memcpy                  
+c0000100  memset                  
+
+
+GLOBAL SYMBOLS: SORTED BY Symbol Address 
+
+address   name                    
+-------   ----                    
+00000000  __TI_STATIC_BASE        
+c0000100  memset                  
+c00001e0  memcpy                  
+c0000280  __TI_decompress_none    
+c00002a0  __TI_decompress_rle24   
+c00002c0  _c_int00                
+c00002e0  helper                  
+c0000314  __TI_Handler_Table_Base 
+c000031c  __TI_Handler_Table_Limit
+c0000320  __TI_CINIT_Base         
+c0000328  __TI_CINIT_Limit        
+ffffffff  __TI_pprof_out_hndl     
+ffffffff  __TI_prof_data_size     
+ffffffff  __TI_prof_data_start    
+ffffffff  __binit__               
+ffffffff  __c_args__              
+ffffffff  binit                   
+
+[17 symbols]

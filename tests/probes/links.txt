@@ -23,3 +23,16 @@ q09-subsect-named|subsect.cmd|--ram_model|q09-subsect
 ; q01 linked a second time under its own name: cmp of the two says whether lnk6x is
 ; deterministic, which decides whether a checked-in image can be a regression test at all
 q01-bare-again|flat.cmd|--ram_model|q01-bare
+; q11: a branch in the middle of a fetch packet - packet-relative or instruction-relative
+q11-pcr-mid|flat.cmd|--ram_model|q11-pcr-mid
+; q12: .bss, a second uninitialised section and .neardata: what "bss first" is a rule about
+q12-bss-order|flat.cmd|--ram_model|q12-bss-order
+; q13: bytes in .const, .rodata and .switch: the flags of a section that is not empty
+q13-const|flat.cmd|--ram_model|q13-const
+; q14: a weak and a strong definition of one name, and an undefined weak reference
+q14-weak|flat.cmd|--ram_model|q14-weak q14-strong
+; q15: a call 16 MB away: the trampoline
+q15-far|far.cmd|--ram_model|q15-far
+; q16: RIDE's own command file (tests/cmd/ride.cmd is kTiLinkCmd) on q04, --rom_model with the
+; runtime: the shape of the image RIDE actually asks for, .vm6747.eh and all
+q16-ride|ride.cmd|-l rts6740_elf_eh.lib|q04-cross-a q04-cross-b
