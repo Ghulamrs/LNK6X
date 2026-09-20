@@ -72,6 +72,16 @@ static std::string basename_of(const std::string &p)
  *  go into the table. A strong definition wins over a weak one wherever it is met - q14 links
  *  the weak object first and lnk6x still gives `wk` the strong object's address - and two
  *  weak definitions keep the first. */
+/*  Whether a definition is one the image will carry: a symbol in a section that is not
+ *  allocated - debug information, the attribute records - is not. */
+bool Link::in_image(int mi, int sym) const
+{
+    const Sym &y = mods[mi].syms[sym];
+    if (y.shndx == SHN_ABS || y.shndx == SHN_COMMON) return true;
+    if (y.shndx >= mods[mi].secs.size()) return false;
+    return (mods[mi].secs[y.shndx].flags & SHF_ALLOC) != 0;
+}
+
 bool Link::take_module(int mi)
 {
     for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = mi;
@@ -86,10 +96,16 @@ bool Link::take_module(int mi)
             d->second = std::make_pair(mi, (int)k);
             continue;
         }
-        if ((had.info >> 4) == STB_GLOBAL && (y.info >> 4) == STB_GLOBAL) {
-            /*  Two strong definitions of one name. lnk6x says "symbol redefined" and stops;
-             *  this linker kept the first and said nothing, so two objects that both defined
-             *  _c_int00 linked quietly (the review's N16). */
+        if ((had.info >> 4) == STB_GLOBAL && (y.info >> 4) == STB_GLOBAL &&
+            in_image(d->second.first, d->second.second) && in_image(mi, (int)k)) {
+            /*  Two strong definitions of one name, both of them in the image. lnk6x says
+             *  "symbol redefined" and stops; this linker kept the first and said nothing, so
+             *  two objects that both defined _c_int00 linked quietly (the review's N16).
+             *
+             *  Only definitions that are in the image count. The runtime's objects share
+             *  debug-information symbols by design - boot.obj and args_main.obj both define
+             *  __TI_DW.debug_info.$base_types.<hash>, in a section that is not allocated and
+             *  never reaches an image - and lnk6x links them without a word. */
             err = "symbol redefined: " + y.name + ", in " +
                   mods[d->second.first].name + " and in " + mods[mi].name;
             return false;

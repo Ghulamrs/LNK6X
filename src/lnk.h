@@ -164,6 +164,7 @@ struct Link {
     bool run();
     bool read_inputs();
     bool take_module(int mi);
+    bool in_image(int mi, int sym) const;
     void add_linker_symbols();
     void set_linker_symbols();
     bool eliminate();
