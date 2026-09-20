@@ -162,10 +162,15 @@ bool Link::build_sections()
         for (size_t si = 1; si < mods[mi].secs.size(); si++) {
             InSec &c = mods[mi].secs[si];
             if (!c.live || !(c.flags & SHF_ALLOC)) continue;
+            /*  A subsection joins its base section: the runtime's 2,731 `.text:name` sections
+             *  and the corpus's `.c6xabi.extab:*` are part of `.text` and `.c6xabi.extab`,
+             *  not sections of their own - unless the command file names the full name, which
+             *  is what is asked first (the review's N6). */
             int oi = out_index(c.name);
+            if (oi < 0 && base_section(c.name) != c.name) oi = out_index(base_section(c.name));
             if (oi < 0) {
                 OutSec o;
-                o.name = c.name; o.flags = 0; o.entsize = 0;
+                o.name = base_section(c.name); o.flags = 0; o.entsize = 0;
                 o.type = SHT_NOBITS; o.addr = 0; o.size = 0; o.align = 1; o.offset = 0;
                 o.pflags = 0; o.progbits = false;
                 outs.push_back(o);
@@ -175,6 +180,24 @@ bool Link::build_sections()
             outs[oi].parts.push_back((int)all.size());
             all.push_back(&c);
         }
+    }
+
+    /*  A `{ *(.text:early) *(.text) *(.text:*) }` list is an order, not decoration: the parts
+     *  that a pattern names come first, in the order the patterns were written, and whatever
+     *  the list does not name keeps the order it was read in after them. */
+    for (size_t i = 0; i < cmd.secs.size() && i < outs.size(); i++) {
+        const SecSpec &sp = cmd.secs[i];
+        if (sp.inputs.empty() || outs[i].name != sp.name) continue;
+        std::vector<int> &ps = outs[i].parts;
+        std::vector<std::pair<size_t, int> > keyed;
+        for (size_t k = 0; k < ps.size(); k++) {
+            size_t rank = sp.inputs.size();
+            for (size_t q = 0; q < sp.inputs.size(); q++)
+                if (sec_matches(sp.inputs[q], all[ps[k]]->name)) { rank = q; break; }
+            keyed.push_back(std::make_pair(rank, ps[k]));
+        }
+        std::stable_sort(keyed.begin(), keyed.end());
+        for (size_t k = 0; k < ps.size(); k++) ps[k] = keyed[k].second;
     }
 
     for (size_t i = 0; i < outs.size(); i++) {
@@ -220,7 +243,23 @@ bool Link::allocate()
             o.addr = (o.progbits && r) ? r->origin : 0;
             continue;
         }
-        if (!r) { err = o.name + ": no memory range for it"; return false; }
+        if (!r) {
+            /*  A section this command file never names - q12's `.mybss`, from a `.usect` -
+             *  is allocated after the named ones, in the first range that still has room for
+             *  it. q12 puts it at 0xC0000064, after `.neardata`, in the only range there is
+             *  (the review's N12). */
+            u32 want = 0;                      /* what the parts will take, padding included */
+            for (size_t p = 0; p < o.parts.size(); p++) {
+                InSec *c = all[o.parts[p]];
+                want = align_up(want, c->align) + c->size;
+            }
+            for (size_t m = 0; m < cmd.mem.size() && !r; m++) {
+                u32 at = align_up(cmd.mem[m].origin + cmd.mem[m].used, o.align);
+                if ((at - cmd.mem[m].origin) + want <= cmd.mem[m].length) r = &cmd.mem[m];
+            }
+            if (!r) { err = o.name + ": no memory range for it"; return false; }
+            o.run = o.load = r->name;
+        }
         u32 at = r->origin + r->used;
         at = align_up(at, o.align);
         for (size_t i = 0; i < cmd.secs.size(); i++)

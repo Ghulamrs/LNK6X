@@ -51,7 +51,49 @@ struct Lex {
 
 u32 number(const std::string &t) { return (u32)strtoul(t.c_str(), 0, 0); }
 
+/*  The body of a `{ ... }` input-section list, the opening brace already taken. Every
+ *  `*(name)` - and a bare `name` - is recorded in the order it appears, because that order
+ *  is the order lnk6x lays the parts down in. Anything else inside is stepped over. */
+void input_list(Lex &lx, SecSpec &sp)
+{
+    int depth = 1;
+    std::string prev;
+    while (depth) {
+        std::string k = lx.next();
+        if (k.empty()) break;
+        if (k == "{") { depth++; prev.clear(); continue; }
+        if (k == "}") { depth--; prev.clear(); continue; }
+        if (k == "(") {
+            /*  The lexer breaks on `:`, so `.text:early` arrives as three tokens; the name is
+             *  whatever stands between the parentheses, put back together. */
+            std::string inner;
+            for (;;) {
+                std::string t = lx.next();
+                if (t.empty() || t == ")") break;
+                inner += t;
+            }
+            if (!inner.empty()) sp.inputs.push_back(inner);
+            prev.clear();
+            continue;
+        }
+        prev = k;
+    }
+}
+
 } /* namespace */
+
+bool sec_matches(const std::string &pattern, const std::string &name)
+{
+    if (!pattern.empty() && pattern[pattern.size() - 1] == '*')
+        return name.compare(0, pattern.size() - 1, pattern, 0, pattern.size() - 1) == 0;
+    return pattern == name;
+}
+
+std::string base_section(const std::string &name)
+{
+    size_t c = name.find(':');
+    return (c == std::string::npos) ? name : name.substr(0, c);
+}
 
 Range *Cmd::range(const std::string &name)
 {
@@ -125,6 +167,11 @@ bool Cmd::parse(const std::string &path, std::string &err)
                         std::string k = lx.peek();
                         if (k == "," ) { lx.next(); continue; }
                         if (k == ">") { lx.next(); sp.load = lx.next(); continue; }
+                        /*  `.text : { *(.text:early) *(.text) } > RAM`. The list used to fall
+                         *  through to the break below, leaving the braces for the outer loop
+                         *  to read as section names and this entry with no range at all - the
+                         *  review's N6, which stopped q09-subsect-named. */
+                        if (k == "{") { lx.next(); input_list(lx, sp); continue; }
                         if (k == "load" || k == "LOAD") {
                             lx.next(); if (lx.peek() == "=" || lx.peek() == ">") lx.next();
                             sp.load = lx.next(); continue;
@@ -150,15 +197,7 @@ bool Cmd::parse(const std::string &path, std::string &err)
                         break;
                     }
                 } else if (t2 == "{") {
-                    /* an input-section list: skipped, with its contents, until a probe asks
-                       for it - docs/known.md says so rather than guessing at the rule */
-                    int depth = 1;
-                    while (depth) {
-                        std::string k = lx.next();
-                        if (k.empty()) break;
-                        if (k == "{") depth++;
-                        else if (k == "}") depth--;
-                    }
+                    input_list(lx, sp);
                     if (lx.peek() == ">") { lx.next(); sp.load = lx.next(); }
                 }
                 secs.push_back(sp);

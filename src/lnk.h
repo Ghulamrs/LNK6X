@@ -83,7 +83,19 @@ struct SecSpec {
     std::string load, run;       /* memory range names; run empty means the same as load */
     u32  align;  bool has_align;
     u32  fill;   bool has_fill;
+    /*  The input-section list of a `.name : { *(.text:early) *(.text) } > RAM` entry, in the
+     *  order it was written: that order is the order the parts are laid down in. A pattern
+     *  may end in `*`. Empty when the entry has no list. */
+    std::vector<std::string> inputs;
 };
+
+/*  `*(.text:early)` against `.text:early`, and `*(.text:*)` against any subsection of .text.
+ *  A pattern is a section name, optionally ending in `*`. */
+bool sec_matches(const std::string &pattern, const std::string &name);
+
+/*  A subsection joins its base section: `.text:_outc` is part of `.text` unless the command
+ *  file names `.text:_outc` itself. */
+std::string base_section(const std::string &name);
 
 struct Cmd {
     std::vector<Range>   mem;
