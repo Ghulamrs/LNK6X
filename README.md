@@ -11,11 +11,39 @@ designed before its output has been read.
 
 ## Where things are
 
-    src/                the linker
+    src/lnk.h           what the passes say to each other
+    src/elf.cpp         one TI ELF32 object, read
+    src/cmd.cpp         the linker command file: MEMORY, SECTIONS, load and run
+    src/link.cpp        elimination, output sections, allocation, relocation
+    src/reloc.cpp       the C6000 fixups
+    src/image.cpp       the ELF32 executable, its segments and its symbol table
+    src/main.cpp        the command line, in lnk6x's spelling
+    tests/ref/          the objects, the images and the maps lnk6x made: the bed's input
+    tests/run.sh        links every probe again and compares the image byte for byte
     tests/probes/       the probes: the smallest input that forces one linker decision each
     tests/cmd/          linker command files - TI's kind, not cmd.exe's
     tests/windows/      what has to run on the box (cl6x, lnk6x, ofd6x, dis6x, nm6x)
     tests/probes.sh     ships the probes to the box, runs them, brings the results back
+    docs/elf-observed.md what lnk6x does, read off the bed
+    docs/known.md       what this linker does differently, or not at all
+
+## Building and testing
+
+    make                                    -> build/lnk6x.exe
+    make test                               -> tests/run.sh
+
+The test is the comparison: each probe is linked again from the objects in `tests/ref` and the
+image is held against lnk6x's, byte for byte. A TI image carries no time stamp and no build
+path, so nothing has to be pinned first - the two files either agree or they do not.
+
+Eight of them agree today: q01, both halves of q02, q03, q04, q05-model-ram, q06 and q08. Two
+link TI's runtime, which is not ours to check in, and four were added to links.txt after the
+box last ran and have no reference image yet. One run of
+
+    sh tests/probes.sh
+
+settles both: it files everything the box returns into `tests/ref`, the runtime library
+included.
 
 Both kinds of file are called `.cmd`, which is unfortunate but is what each tool wants:
 `tests/cmd/*.cmd` are read by `lnk6x`, `tests/windows/*.cmd` by `cmd.exe`.
