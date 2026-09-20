@@ -213,10 +213,53 @@ void Link::add_linker_symbols()
                 wanted[y.name] = true;
         }
 
+    /*  COMMON: a symbol with no section and a size, which is what `st_shndx` 0xFFF2 means.
+     *  The runtime has four - parmbuf, __TI_tmpnams, _ZSt16__dummy_typeinfo, __dso_handle -
+     *  and sym_addr used to refuse them as "names no section". The largest size wins, the
+     *  alignment is the symbol's value, and they are allocated together in .bss (N7). Where
+     *  lnk6x puts that run inside .bss is not something the bed shows. */
+    std::map<std::string, std::pair<u32, u32> > common;      /* name -> size, alignment */
+    for (size_t mi = 0; mi < mods.size(); mi++)
+        for (size_t k = 0; k < mods[mi].syms.size(); k++) {
+            const Sym &y = mods[mi].syms[k];
+            if (y.shndx != SHN_COMMON || y.name.empty()) continue;
+            if (defined.find(y.name) != defined.end()) continue;
+            std::map<std::string, std::pair<u32, u32> >::iterator it = common.find(y.name);
+            u32 al = y.value ? y.value : 1;
+            if (it == common.end()) common[y.name] = std::make_pair(y.size, al);
+            else {
+                if (y.size > it->second.first)  it->second.first = y.size;
+                if (al > it->second.second) it->second.second = al;
+            }
+        }
+
     Module m;
     m.name = "<linker>";
     m.file_sym = -1;
     m.syms.push_back(Sym());                /* the null symbol every module's table starts with */
+    {
+        InSec null_sec;
+        null_sec.name = ""; null_sec.type = SHT_NULL; null_sec.flags = 0; null_sec.size = 0;
+        null_sec.align = 1; null_sec.entsize = 0; null_sec.module = -1; null_sec.index = 0;
+        null_sec.live = false; null_sec.out = -1; null_sec.addr = 0; null_sec.load = 0;
+        m.secs.push_back(null_sec);
+        InSec bss;
+        bss.name = ".bss"; bss.type = SHT_NOBITS; bss.flags = SHF_ALLOC | SHF_WRITE;
+        bss.size = 0; bss.align = 1; bss.entsize = 0; bss.module = -1; bss.index = 1;
+        bss.live = false; bss.out = -1; bss.addr = 0; bss.load = 0;
+        for (std::map<std::string, std::pair<u32, u32> >::iterator it = common.begin();
+             it != common.end(); ++it) {
+            u32 al = it->second.second;
+            if (al > bss.align) bss.align = al;
+            bss.size = align_up(bss.size, al);
+            Sym y;
+            y.name = it->first; y.value = bss.size; y.size = it->second.first;
+            y.info = (u8)((STB_GLOBAL << 4) | STT_OBJECT); y.other = 2; y.shndx = 1;
+            m.syms.push_back(y);
+            bss.size += it->second.first;
+        }
+        m.secs.push_back(bss);
+    }
     for (int i = 0; always[i]; i++) {
         if (defined.find(always[i]) != defined.end()) continue;   /* an object got there first */
         Sym y;

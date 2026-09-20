@@ -37,7 +37,11 @@ enum { SHN_UNDEF = 0, SHN_ABS = 0xFFF1u, SHN_COMMON = 0xFFF2u };
 enum {
     R_C6000_NONE = 0, R_C6000_ABS32 = 1, R_C6000_ABS16 = 2, R_C6000_ABS8 = 3,
     R_C6000_PCR_S21 = 4, R_C6000_PCR_S12 = 5, R_C6000_PCR_S10 = 6, R_C6000_PCR_S7 = 7,
-    R_C6000_ABS_S16 = 8, R_C6000_ABS_L16 = 9, R_C6000_ABS_H16 = 10
+    R_C6000_ABS_S16 = 8, R_C6000_ABS_L16 = 9, R_C6000_ABS_H16 = 10,
+    /*  Met in the runtime and in every C++ program, and not applied here: what each one
+     *  computes has not been read off the oracle yet, and a relocation applied by guesswork
+     *  is a wrong image written in silence. docs/known.md has the measurements so far. */
+    R_C6000_PREL31 = 25, R_C6000_EHTYPE = 28, R_C6000_PCR_H16 = 29, R_C6000_PCR_L16 = 30
 };
 
 struct Rel { u32 offset; u32 sym; u32 type; i32 addend; };

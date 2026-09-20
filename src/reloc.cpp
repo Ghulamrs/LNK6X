@@ -37,7 +37,20 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
     case R_C6000_PCR_S10: field(p, (V - (P & ~0x1Fu)) >> 2, 13, 10); break;
     case R_C6000_PCR_S7:  field(p, (V - (P & ~0x1Fu)) >> 2, 16, 7); break;
     default: {
-        char b[64]; snprintf(b, sizeof b, "relocation type %u is not handled", type);
+        /*  Name it. `relocation type 30 is not handled` sent a reader to the ABI to find out
+         *  which one that was; these four are the ones the runtime and the C++ unwind tables
+         *  bring, and what each computes is still unread (docs/known.md). */
+        const char *nm = 0;
+        switch (type) {
+        case R_C6000_PREL31:  nm = "PREL31";  break;
+        case R_C6000_EHTYPE:  nm = "EHTYPE";  break;
+        case R_C6000_PCR_H16: nm = "PCR_H16"; break;
+        case R_C6000_PCR_L16: nm = "PCR_L16"; break;
+        default: break;
+        }
+        char b[96];
+        if (nm) snprintf(b, sizeof b, "relocation R_C6000_%s (%u) is not handled", nm, type);
+        else    snprintf(b, sizeof b, "relocation type %u is not handled", type);
         err = b; return false;
     }
     }
