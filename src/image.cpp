@@ -147,6 +147,10 @@ bool Link::write_image()
         for (size_t k = 1; k < m.syms.size(); k++) {
             Sym &y = m.syms[k];
             if ((y.info >> 4) == STB_LOCAL || y.name.empty() || y.shndx == SHN_UNDEF) continue;
+            /*  Only the definition that won: with a weak and a strong definition of one name
+             *  (q14) both objects carry it, and lnk6x writes one symbol, the strong one. */
+            std::map<std::string, std::pair<int, int> >::const_iterator d = defined.find(y.name);
+            if (d != defined.end() && (d->second.first != (int)mi || d->second.second != (int)k)) continue;
             OutSym o;
             o.name = str.add(y.name); o.size = y.size; o.info = y.info; o.other = 2;
             if (y.shndx == SHN_ABS) { o.value = y.value; o.shndx = SHN_ABS; }
@@ -168,6 +172,25 @@ bool Link::write_image()
         o.info = (STB_GLOBAL << 4) | STT_NOTYPE; o.other = 2;
         o.shndx = (u16)(sb >= 0 ? sb + 1 : (int)SHN_ABS);
         syms.push_back(o);
+    }
+    /*  The weak names nothing defined. lnk6x keeps them: UNDEF, WEAK, value 0, and after
+     *  __TI_STATIC_BASE in the table - q14's `undefined_weak` is the last symbol in its
+     *  image. A weak reference resolves to zero rather than stopping the link. */
+    {
+        std::map<std::string, bool> seen;
+        for (size_t mi = 0; mi < mods.size(); mi++) {
+            Module &m = mods[mi];
+            for (size_t k = 1; k < m.syms.size(); k++) {
+                const Sym &y = m.syms[k];
+                if ((y.info >> 4) != STB_WEAK || y.shndx != SHN_UNDEF || y.name.empty()) continue;
+                if (defined.find(y.name) != defined.end() || seen[y.name]) continue;
+                seen[y.name] = true;
+                OutSym o;
+                o.name = str.add(y.name); o.value = 0; o.size = 0;
+                o.info = y.info; o.other = 2; o.shndx = SHN_UNDEF;
+                syms.push_back(o);
+            }
+        }
     }
 
     pos = sym_off + (u32)syms.size() * 16;

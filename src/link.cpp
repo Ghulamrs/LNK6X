@@ -83,8 +83,14 @@ bool Link::read_inputs()
             const Sym &y = mods[mi].syms[k];
             if ((y.info >> 4) == STB_LOCAL || y.name.empty()) continue;
             if (y.shndx == SHN_UNDEF) continue;
-            if (defined.find(y.name) == defined.end())
-                defined[y.name] = std::make_pair((int)mi, (int)k);
+            std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
+            if (d == defined.end()) { defined[y.name] = std::make_pair((int)mi, (int)k); continue; }
+            /*  A strong definition wins over a weak one wherever it is met: q14 links the
+             *  weak object first and lnk6x still gives `wk` the strong object's address. Two
+             *  weak definitions keep the first. */
+            const Sym &had = mods[d->second.first].syms[d->second.second];
+            if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL)
+                d->second = std::make_pair((int)mi, (int)k);
         }
     }
     return true;
@@ -112,11 +118,22 @@ bool Link::eliminate()
             if (rl.sym >= mods[at.first].syms.size()) { err = c.name + ": a relocation names no symbol"; return false; }
             const Sym &y = mods[at.first].syms[rl.sym];
             int tm = at.first; u16 tx = y.shndx;
-            if (y.shndx == SHN_UNDEF) {
+            /*  A name that is not the object's own goes through the table of definitions,
+             *  even when this object defines it too: q14's weak `wk` is defined in the
+             *  referring object and lnk6x still reaches the strong one in the other. */
+            if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
                 std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
-                if (d == defined.end()) { err = "unresolved symbol: " + y.name; return false; }
-                tm = d->second.first;
-                tx = mods[tm].syms[d->second.second].shndx;
+                if (d != defined.end()) {
+                    tm = d->second.first;
+                    tx = mods[tm].syms[d->second.second].shndx;
+                } else if (y.shndx == SHN_UNDEF) {
+                    /*  An undefined weak reference is not an error: it is zero, and it pulls
+                     *  nothing in with it (q14 - lnk6x keeps it as UNDEF WEAK). */
+                    if ((y.info >> 4) == STB_WEAK) continue;
+                    err = "unresolved symbol: " + y.name; return false;
+                }
+            } else if (y.shndx == SHN_UNDEF) {
+                err = "unresolved symbol: " + y.name; return false;
             }
             if (tx == SHN_ABS || tx == SHN_UNDEF || tx >= mods[tm].secs.size()) continue;
             InSec &t = mods[tm].secs[tx];
@@ -288,11 +305,17 @@ bool Link::allocate()
 bool Link::sym_addr(int mod, int sym, u32 &a)
 {
     const Sym &y = mods[mod].syms[sym];
+    /* the same rule as in eliminate: a name that is not the object's own is the table's */
+    if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
+        std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
+        if (d != defined.end() &&
+            (d->second.first != mod || d->second.second != sym))
+            return sym_addr(d->second.first, d->second.second, a);
+    }
     if (y.shndx == SHN_ABS) { a = y.value; return true; }
     if (y.shndx == SHN_UNDEF) {
-        std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
-        if (d == defined.end()) { err = "unresolved symbol: " + y.name; return false; }
-        return sym_addr(d->second.first, d->second.second, a);
+        if ((y.info >> 4) == STB_WEAK) { a = 0; return true; }
+        err = "unresolved symbol: " + y.name; return false;
     }
     if (y.shndx >= mods[mod].secs.size()) { err = y.name + ": names no section"; return false; }
     const InSec &c = mods[mod].secs[y.shndx];
