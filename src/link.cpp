@@ -183,6 +183,13 @@ bool Link::build_sections()
             InSec *c = all[o.parts[k]];
             if (c->align > o.align) o.align = c->align;
             if (c->type == SHT_PROGBITS) o.progbits = true;
+            /*  The flags of a section that has input come from that input, not from the table
+             *  above: the table was read off *empty* sections, where lnk6x writes 0 for
+             *  .const, .switch, .cio, .stack and .sysmem, and q13 shows all three of .const,
+             *  .rodata and .switch with ALLOC once they hold bytes. A name the table does not
+             *  know had 0 and was therefore never laid out at all - its bytes went to file
+             *  offset 0, over the ELF header (the review's N3). */
+            o.flags |= c->flags & (u32)(SHF_WRITE | SHF_ALLOC | SHF_EXECINSTR);
             o.pflags |= PF_R;
             if (c->flags & SHF_WRITE) o.pflags |= PF_W;
             if (c->flags & SHF_EXECINSTR) o.pflags |= PF_X;

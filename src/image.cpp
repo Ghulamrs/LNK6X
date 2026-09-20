@@ -77,6 +77,16 @@ bool Link::write_image()
     }
     for (size_t k = 0; k < empty.size(); k++) outs[empty[k]].offset = pos;
 
+    /*  Nothing with bytes may be left without an offset. Before N3 was found, a section whose
+     *  flags said it was not allocated kept offset 0 and its bytes were copied over the ELF
+     *  header: a file that was not an ELF file at all, written without a word. */
+    for (u32 i = 0; i < nout; i++)
+        if (outs[i].type == SHT_PROGBITS && outs[i].size && !outs[i].offset) {
+            err = outs[i].name + ": laid out at no file offset (flags " +
+                  std::string(1, (char)('0' + (outs[i].flags & 7))) + ")";
+            return false;
+        }
+
     u32 attr_off = pos;                       pos += (u32)sizeof attributes;
     u32 sym_off  = align_up(pos, 4);          /* the symbol table is the one that is aligned */
 
