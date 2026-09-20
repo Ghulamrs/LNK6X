@@ -113,7 +113,7 @@ bool Link::read_inputs()
         mods.push_back(m);
     }
     for (size_t mi = 0; mi < mods.size(); mi++) take_module((int)mi);
-    if (libs.empty()) return true;
+    if (libs.empty()) { add_linker_symbols(); return true; }
 
     /*  Then the archives, in passes. One pass takes every member the current undefined set
      *  names; the members it take may ask for more, which the next pass answers. The entry
@@ -159,7 +159,103 @@ bool Link::read_inputs()
         }
         if (!took) break;
     }
+    add_linker_symbols();
     return true;
+}
+
+/*  The names lnk6x defines itself. It defines each one only when something asks for it - a
+ *  link with no runtime has none of them, and q09's map lists only the six it invents whatever
+ *  happens - and it writes them against an output section rather than as absolutes, except the
+ *  three that are sizes. All of this is read off q07's image and map (the review's N5).
+ *
+ *  __TI_INITARRAY_Base and _Limit are not here: the runtime declares them weak undefined and
+ *  q07 shows lnk6x leaving them that way, which the weak rule already does.
+ */
+void Link::add_linker_symbols()
+{
+    static const struct { const char *name; const char *sec; int which; } table[] = {
+        { "__TI_STACK_END",           ".stack",         1 },   /* the end of the section */
+        { "__TI_STACK_SIZE",          "",               2 },   /* --stack_size, absolute */
+        { "__TI_SYSMEM_SIZE",         "",               3 },   /* --heap_size, absolute */
+        { "__TI_UNWIND_TABLE_START",  ".c6xabi.exidx",  0 },
+        { "__TI_UNWIND_TABLE_END",    ".c6xabi.exidx",  1 },
+        { "__TI_CINIT_Base",          ".cinit",         0 },
+        { "__TI_CINIT_Limit",         ".cinit",         1 },
+        { "__TI_Handler_Table_Base",  ".cinit",         0 },
+        { "__TI_Handler_Table_Limit", ".cinit",         1 },
+        { "__TI_STATIC_BASE",         ".bss",           0 },   /* last: lnk6x writes it last */
+        { 0, 0, 0 }
+    };
+    /*  The six lnk6x invents whether or not anything wants them: they are absolute and
+     *  0xFFFFFFFF, image.cpp writes them at the head of the globals, and they are registered
+     *  here as well so that a runtime's reference to `__binit__` resolves. */
+    static const char *const always[] = {
+        "binit", "__binit__", "__c_args__",
+        "__TI_pprof_out_hndl", "__TI_prof_data_start", "__TI_prof_data_size", 0
+    };
+    std::map<std::string, bool> wanted;
+    wanted["__TI_STATIC_BASE"] = true;      /* this one is in every image the bed has */
+    for (size_t mi = 0; mi < mods.size(); mi++)
+        for (size_t k = 0; k < mods[mi].syms.size(); k++) {
+            const Sym &y = mods[mi].syms[k];
+            if (y.shndx == SHN_UNDEF && !y.name.empty() && defined.find(y.name) == defined.end())
+                wanted[y.name] = true;
+        }
+
+    Module m;
+    m.name = "<linker>";
+    m.file_sym = -1;
+    m.syms.push_back(Sym());                /* the null symbol every module's table starts with */
+    for (int i = 0; always[i]; i++) {
+        Sym y;
+        y.name = always[i]; y.value = 0xFFFFFFFFu;
+        y.info = (u8)((STB_GLOBAL << 4) | STT_NOTYPE); y.other = 2; y.shndx = SHN_ABS;
+        m.syms.push_back(y);
+    }
+    for (int i = 0; table[i].name; i++) {
+        if (!wanted[table[i].name]) continue;
+        Sym y;
+        y.name = table[i].name;
+        y.info = (u8)((STB_GLOBAL << 4) | STT_NOTYPE);
+        y.other = 2;
+        y.shndx = SHN_ABS;              /* an address while it is resolved; see lnk_out */
+        y.lnk_out = -1;
+        m.syms.push_back(y);
+    }
+    mods.push_back(m);
+    lnk_mod = (int)mods.size() - 1;
+    take_module(lnk_mod);
+}
+
+/*  Their values, once the sections have addresses. `.stack` and `.sysmem` are the linker's
+ *  own too: q07's are 0x4000 and 0x1000, which are --stack_size and --heap_size, and no input
+ *  section contributes to either. A link that asks for neither leaves both at zero, which is
+ *  what q01 through q14 show (the review's N10). */
+void Link::set_linker_symbols()
+{
+    if (lnk_mod < 0) return;
+    Module &m = mods[lnk_mod];
+    for (size_t k = 0; k < m.syms.size(); k++) {
+        Sym &y = m.syms[k];
+        if (y.name == "__TI_STACK_SIZE")  { y.value = cmd.stack_size; continue; }
+        if (y.name == "__TI_SYSMEM_SIZE") { y.value = cmd.heap_size;  continue; }
+        if (y.name == "__TI_STATIC_BASE") {
+            int b = out_index(".bss");
+            y.value = static_base;
+            y.lnk_out = b;                  /* .bss when there is one, absolute otherwise */
+            continue;
+        }
+        std::string sec = ".cinit";
+        int end = 1;
+        if (y.name == "__TI_STACK_END")                 sec = ".stack";
+        else if (y.name.compare(0, 18, "__TI_UNWIND_TABLE") == 0) sec = ".c6xabi.exidx";
+        if (y.name == "__TI_UNWIND_TABLE_START" || y.name == "__TI_CINIT_Base" ||
+            y.name == "__TI_Handler_Table_Base") end = 0;
+        int oi = out_index(sec);
+        if (oi < 0) continue;
+        y.value = outs[oi].addr + (end ? outs[oi].size : 0);
+        y.lnk_out = oi;
+    }
 }
 
 /* ------------------------------------------------- unused section elimination */
@@ -312,6 +408,20 @@ bool Link::allocate()
     /*  .bss goes first. It is not first in any command file the bed uses, and it still comes
      *  out at the origin in q03 - what decides it is that __TI_STATIC_BASE points at .bss, so
      *  the near region has to start where the range does. */
+    /*  .stack and .sysmem are the linker's: nothing contributes to them, and their size is
+     *  --stack_size and --heap_size - but only in a link that asked for the names, which is
+     *  the runtime's doing. Without one both stay at zero, as every bare probe shows. */
+    if (lnk_mod >= 0) {
+        for (size_t k = 0; k < mods[lnk_mod].syms.size(); k++) {
+            const std::string &n = mods[lnk_mod].syms[k].name;
+            int oi = -1;
+            if (n == "__TI_STACK_END" || n == "__TI_STACK_SIZE") oi = out_index(".stack");
+            else if (n == "__TI_SYSMEM_SIZE") oi = out_index(".sysmem");
+            if (oi < 0) continue;
+            outs[oi].reserve = (n == "__TI_SYSMEM_SIZE") ? cmd.heap_size : cmd.stack_size;
+        }
+    }
+
     std::vector<int> order;
     int bi = out_index(".bss");
     if (bi >= 0 && !outs[bi].parts.empty()) order.push_back(bi);
@@ -320,10 +430,20 @@ bool Link::allocate()
     for (size_t k = 0; k < order.size(); k++) {
         OutSec &o = outs[order[k]];
         Range *r = o.run.empty() ? 0 : cmd.range(o.run);
-        if (o.parts.empty()) {
+        if (o.parts.empty() && !o.reserve) {
             /*  An empty section still has an address when it holds bytes - a fill makes it
              *  initialised - and none at all when it does not. */
             o.addr = (o.progbits && r) ? r->origin : 0;
+            continue;
+        }
+        if (o.parts.empty()) {                       /* .stack, .sysmem: size without input */
+            if (!r) r = cmd.mem.empty() ? 0 : &cmd.mem[0];
+            if (!r) { err = o.name + ": no memory range for it"; return false; }
+            u32 at = align_up(r->origin + r->used, o.align > 8 ? o.align : 8);
+            o.addr = at; o.size = o.reserve;
+            at += o.reserve;
+            if (at - r->origin > r->length) { err = o.name + ": does not fit in " + r->name; return false; }
+            r->used = at - r->origin;
             continue;
         }
         if (!r) {
@@ -362,6 +482,7 @@ bool Link::allocate()
 
     int sb = out_index(".bss");
     static_base = (sb >= 0) ? outs[sb].addr : 0;
+    set_linker_symbols();
 
     std::map<std::string, std::pair<int, int> >::iterator e = defined.find(opt.entry);
     if (!sym_addr(e->second.first, e->second.second, entry_addr)) return false;

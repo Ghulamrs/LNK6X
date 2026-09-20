@@ -144,6 +144,7 @@ bool Link::write_image()
     }
     for (size_t mi = 0; mi < mods.size(); mi++) {
         Module &m = mods[mi];
+        if ((int)mi == lnk_mod) continue;      /* the linker's own names come after these */
         for (size_t k = 1; k < m.syms.size(); k++) {
             Sym &y = m.syms[k];
             if ((y.info >> 4) == STB_LOCAL || y.name.empty() || y.shndx == SHN_UNDEF) continue;
@@ -153,7 +154,8 @@ bool Link::write_image()
             if (d != defined.end() && (d->second.first != (int)mi || d->second.second != (int)k)) continue;
             OutSym o;
             o.name = str.add(y.name); o.size = y.size; o.info = y.info; o.other = 2;
-            if (y.shndx == SHN_ABS) { o.value = y.value; o.shndx = SHN_ABS; }
+            if (y.lnk_out >= 0) { o.value = y.value; o.shndx = (u16)(y.lnk_out + 1); }
+            else if (y.shndx == SHN_ABS) { o.value = y.value; o.shndx = SHN_ABS; }
             else {
                 if (y.shndx >= m.secs.size()) continue;
                 InSec &c = m.secs[y.shndx];
@@ -164,15 +166,24 @@ bool Link::write_image()
             syms.push_back(o);
         }
     }
-    {
-        int sb = out_index(".bss");
-        OutSym o;
-        o.name = str.add("__TI_STATIC_BASE");
-        o.value = static_base; o.size = 0;
-        o.info = (STB_GLOBAL << 4) | STT_NOTYPE; o.other = 2;
-        o.shndx = (u16)(sb >= 0 ? sb + 1 : (int)SHN_ABS);
-        syms.push_back(o);
+    /*  Then the names the linker defined itself, in the order add_linker_symbols made them -
+     *  __TI_STATIC_BASE last, which is where lnk6x writes it. The six it invents are already
+     *  at the head of the globals, so they are not written twice. */
+    if (lnk_mod >= 0) {
+        Module &m = mods[lnk_mod];
+        for (size_t k = 1; k < m.syms.size(); k++) {
+            const Sym &y = m.syms[k];
+            bool already = false;
+            for (int i = 0; i < ninvented && !already; i++) already = (y.name == invented[i]);
+            if (already) continue;
+            OutSym o;
+            o.name = str.add(y.name); o.size = 0; o.info = y.info; o.other = 2;
+            o.value = y.value;
+            o.shndx = (u16)(y.lnk_out >= 0 ? y.lnk_out + 1 : (int)SHN_ABS);
+            syms.push_back(o);
+        }
     }
+
     /*  The weak names nothing defined. lnk6x keeps them: UNDEF, WEAK, value 0, and after
      *  __TI_STATIC_BASE in the table - q14's `undefined_weak` is the last symbol in its
      *  image. A weak reference resolves to zero rather than stopping the link. */

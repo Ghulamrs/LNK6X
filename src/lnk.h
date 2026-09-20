@@ -48,6 +48,11 @@ struct Sym {
     u8  info, other;
     u16 shndx;
     int out;            /* index in the output symbol table, -1 while it has none */
+    /*  A name the linker defines itself is absolute while it is being resolved - its value is
+     *  the address - but lnk6x writes it against an output section: q07 has __TI_STACK_END in
+     *  .stack and __TI_CINIT_Base in .cinit. This says which, or -1 for an ordinary symbol. */
+    int lnk_out;
+    Sym() : value(0), size(0), info(0), other(0), shndx(0), out(-1), lnk_out(-1) {}
 };
 
 /* one input section, from one object */
@@ -111,10 +116,13 @@ struct Cmd {
 struct OutSec {
     std::string name;
     u32 type, flags, addr, size, align, entsize, offset;
+    u32 reserve;                 /* bytes the linker itself asks for: .stack, .sysmem */
     u32 pflags;                  /* the segment attributes, taken from the input sections */
     std::vector<int> parts;      /* indices into Link::all, in allocation order */
     bool progbits;               /* a fill makes an empty section initialised */
     std::string load, run;
+    OutSec() : type(SHT_NOBITS), flags(0), addr(0), size(0), align(1), entsize(0), offset(0),
+               reserve(0), pflags(0), progbits(false) {}
 };
 
 struct Seg { u32 offset, vaddr, paddr, filesz, memsz, flags, align; };
@@ -136,13 +144,16 @@ struct Link {
     std::vector<Seg>     segs;
     std::map<std::string, std::pair<int, int> > defined;   /* name -> module, symbol */
     u32 entry_addr, static_base;
+    int lnk_mod;                 /* the module holding the names the linker defines, or -1 */
     std::string err;
 
-    Link() : entry_addr(0), static_base(0) {}
+    Link() : entry_addr(0), static_base(0), lnk_mod(-1) {}
 
     bool run();
     bool read_inputs();
     void take_module(int mi);
+    void add_linker_symbols();
+    void set_linker_symbols();
     bool eliminate();
     bool build_sections();
     bool allocate();
