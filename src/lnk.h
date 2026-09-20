@@ -25,7 +25,7 @@ enum {
     SHT_TI_SECTION_FLAGS = 0x7F000005u,
     SHT_TI_SYMBOL_ALIAS  = 0x7F000006u
 };
-enum { SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4 };
+enum { SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_GROUP = 0x200 };
 enum { PF_X = 1, PF_W = 2, PF_R = 4 };
 enum { STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2 };
 enum { STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2, STT_SECTION = 3, STT_FILE = 4 };
@@ -68,6 +68,7 @@ struct InSec {
     int  module;
     int  index;                  /* its section number inside that object */
     bool live;                   /* survived unused-section elimination */
+    bool dropped;                /* a second copy of a group section: another object had it */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */
     u32  load;                   /* load address: the same unless the command file parts them */
@@ -155,6 +156,7 @@ struct Link {
     std::vector<OutSec>  outs;
     std::vector<Seg>     segs;
     std::map<std::string, std::pair<int, int> > defined;   /* name -> module, symbol */
+    std::map<std::string, bool> groups;   /* group section names already taken, by the first */
     u32 entry_addr, static_base;
     int lnk_mod;                 /* the module holding the names the linker defines, or -1 */
     std::string err;

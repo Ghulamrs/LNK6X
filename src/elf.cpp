@@ -41,6 +41,7 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
         c.module  = -1;
         c.index   = i;
         c.live    = false;
+        c.dropped = false;
         c.out     = -1;
         c.addr    = 0;
         c.load    = 0;

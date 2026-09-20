@@ -85,10 +85,22 @@ bool Link::in_image(int mi, int sym) const
 bool Link::take_module(int mi)
 {
     for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = mi;
+    /*  A section marked SHF_GROUP is C++'s vague linkage: the same definition compiled into
+     *  every object that needed it, for the linker to keep once. The runtime's `_ZTSv` is in
+     *  `.const:.typeinfo:_ZTSv`, flags 0x202, in both tdeh_cpp_abi.obj and typeinfo_.obj, and
+     *  lnk6x links them without a word - so the first copy of a group section name is kept and
+     *  every later one is dropped, with the symbols in it. */
+    for (size_t si = 1; si < mods[mi].secs.size(); si++) {
+        InSec &c = mods[mi].secs[si];
+        if (!(c.flags & SHF_GROUP) || c.name.empty()) continue;
+        if (groups[c.name]) c.dropped = true;
+        else groups[c.name] = true;
+    }
     for (size_t k = 0; k < mods[mi].syms.size(); k++) {
         const Sym &y = mods[mi].syms[k];
         if ((y.info >> 4) == STB_LOCAL || y.name.empty()) continue;
         if (y.shndx == SHN_UNDEF) continue;
+        if (y.shndx < mods[mi].secs.size() && mods[mi].secs[y.shndx].dropped) continue;
         std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
         if (d == defined.end()) { defined[y.name] = std::make_pair(mi, (int)k); continue; }
         const Sym &had = mods[d->second.first].syms[d->second.second];
@@ -370,7 +382,7 @@ bool Link::eliminate()
             }
             if (tx == SHN_ABS || tx == SHN_UNDEF || tx >= mods[tm].secs.size()) continue;
             InSec &t = mods[tm].secs[tx];
-            if (t.live) continue;
+            if (t.live || t.dropped) continue;
             t.live = true;
             work.push_back(std::make_pair(tm, (int)tx));
         }
@@ -411,7 +423,7 @@ bool Link::build_sections()
     for (size_t mi = 0; mi < mods.size(); mi++) {
         for (size_t si = 1; si < mods[mi].secs.size(); si++) {
             InSec &c = mods[mi].secs[si];
-            if (!c.live || !(c.flags & SHF_ALLOC)) continue;
+            if (!c.live || c.dropped || !(c.flags & SHF_ALLOC)) continue;
             /*  A subsection joins its base section: the runtime's 2,731 `.text:name` sections
              *  and the corpus's `.c6xabi.extab:*` are part of `.text` and `.c6xabi.extab`,
              *  not sections of their own - unless the command file names the full name, which
