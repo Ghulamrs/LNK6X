@@ -109,8 +109,30 @@ they compound, so the three are not useful as regression tests until the first f
     index byte, two of padding, a 32-bit length, then the bytes - and its load address must
     be **1 modulo 4**, or the length word is unaligned. That is a whole format, and it is
     enough to compose a correct table without implementing TI's compressor; what it will not
-    give is an image byte-identical to lnk6x's, which chooses rle24. `__TI_decompress_rle24`
-    tail-calls `__TI_decompress_rle_core` with 1 in A6 and its stream is still unread.
+    give is an image byte-identical to lnk6x's, which chooses rle24.
+
+    **And rle24's stream, read the same way** (`__TI_decompress_rle_core` at 0xC0000000).
+    `__TI_decompress_rle24` tail-calls it with 1 in A6. The core takes the first byte of the
+    stream as an **escape value** E, then reads bytes: one that is not E is stored literally
+    and it goes round again; one that is E introduces a run - the next byte is the count,
+    the one after it the value, and it calls `memset` and advances. A count of zero is the
+    long form: two or three further bytes are shifted and or-ed into a wider length (A6 is
+    what makes it 24-bit rather than 16), and a count below four means the run is of E
+    itself, so an escape can be emitted without one. dst advances by the count each time.
+
+    **That is the format, and it is still not enough to match lnk6x byte for byte**, which
+    is worth saying plainly: a decompressor says what is *legal*, not what the compressor
+    *chooses*. Which escape byte lnk6x picks, when it prefers a run to literals, when it
+    reaches for the long form, and when it gives up and uses `none` at all are encoder
+    decisions that are not in this code. q05 is the evidence: four bytes of data, and lnk6x
+    still chose rle24 - `00 00 44 33 22 11 00 00 00 00 00 00` - where a reasonable encoder
+    would have used `none`. Byte-identity here needs TI's compressor, not its decompressor.
+
+    There is also a caller convention still unread: `none` wants its length at `load + 3`,
+    which is only aligned when the record's load address is 1 modulo 4 (q18's second record
+    is), while the rle core reads *its* first byte as the escape - and the record's first
+    byte is the handler index. One of the two is reached with the index already skipped, and
+    only `__TI_auto_init` says which.
   * **The allocation order with a library is not the SECTIONS order.** q07's addresses come out
     `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
     `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
