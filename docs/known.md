@@ -36,9 +36,10 @@ by name or about the near region in general.
 packet and this linker matches lnk6x byte for byte, so `target - (P & ~31)` is the rule and
 `target - P` is not. The open question the earlier text left is closed.
 
-**PCR_L16 and PCR_H16 are not applied, and the bed says why not.** The only place they appear
-is `tdeh_uwentry_c6000.obj` in the runtime, three pairs of them, and q07-lib.out has the
-relocated words. Held against it (the section runs at 0xC00066E0):
+**PCR_L16 and PCR_H16 are applied, and the rule was read off the oracle's own bytes**
+(2026-09-22). They occur in one place only - `tdeh_uwentry_c6000.obj`, three pairs, and a
+scan of all 456 members of `rts6740_elf_eh.lib` says there is no fourth site. Held against
+q07-lib.out (the contribution runs at 0xC00066E0):
 
 | at | symbol | S | A | P | L16 field | H16 field |
 |----|--------|---|---|---|-----------|-----------|
@@ -46,22 +47,29 @@ relocated words. Held against it (the section runs at 0xC00066E0):
 | +040 | __TI_Unwind_Resume | C0006E00 | +56 | C0006720 | 0720 | 0000 |
 | +0B8 | __TI_cxa_end_cleanup | C0007DE0 | -20 | C0006798 | 1660 | 0000 |
 
-`S + A - P` gives 1258, 0718, 1634 and `S + A - (P & ~31)` gives 1258, 0718, 164C, so neither
-is it; the implied targets are S, S+0x40 and S+0x18, which is not a constant relation to the
-addend either.
+`S + A - P` gives 1258, 0718, 1634 and `S + A - (P & ~31)` gives 1258, 0718, 164C, so
+neither is it - and that is where this note stopped for a while. What settled it was the
+object's own labels: `base_pcr` at +0x08 and `cxa_base_pcr` at +0xB4, which are the base
+argument of TI's `$PCR_OFFSET(dest, base)`. The addend says which one:
 
-**2026-09-22: `S - (P & ~31)` - the fetch packet, and the addend *not* added - fits two of the
-three exactly** (1260 and 1660) and misses the second by 0x40 (06E0 against 0720). That is
-better than either rule above, which fit none, and it says two things: the base is the fetch
-packet, and `r_addend` is not part of this relocation's value. What is left is one site out by
-exactly 0x40, which is not the addend there (+56 = 0x38). A fourth and fifth site would settle
-whether that 0x40 belongs to the symbol - `__TI_Unwind_Resume` may be being reached at its
-second fetch packet - or to the field. Until then the linker still refuses both types: a word
-it cannot justify is worse than a refusal, because the program links and then misbehaves. The same object's ABS_L16 and ABS_H16 in the same table read correctly with the
-bits-7..22 field, so the field is being read right. Until a rule fits all three, the linker
-refuses the relocation by name rather than writing a word it cannot justify. PREL31 (25) and
-EHTYPE (28) are refused for the same reason and have not been measured at all - PREL31 is in
-27 members of the runtime and in every C++ program's unwind tables.
+    A = (P & ~31) - base           so   base = (P & ~31) - A
+
+and the value is measured from *that label's* fetch packet, not the instruction's:
+
+    V = S - ( ((P & ~31) - A) & ~31 )
+
+1260, 0720, 1660 - all three. `r_addend` is therefore not added to S at all; it is how the
+base is carried. The same value's high half goes in H16, which is why all three read 0000.
+
+Two things made it findable. The object's *pre-link* words already hold the addend in the
+field (FFF8, 0038, FFF4), which is what identified the addend as a section-relative
+quantity rather than part of the target; and q17 links the same program from two ranges
+0x1234000 apart, where all three fields come out identical - so the value is a difference
+of two addresses that shift together, which rules out anything absolute.
+
+Verified in four C++ programs of the corpus (06-smart, 07-vector3, 08-cxx1lab,
+23-template-container): every site in this linker's own images satisfies the rule against
+that image's own addresses, and the corpus has no linker refusal left.
 
 **The `-l`/archive pull rule for weak names is assumed, not read.** An undefined *weak* name
 does not pull a member out of an archive here, which is what ELF means by weak and why the
@@ -100,7 +108,7 @@ they compound, so the three are not useful as regression tests until the first f
 
 Each is a refusal, not a silent wrong answer: the linker says so and stops.
 
-  * PREL31, EHTYPE, PCR_L16 and PCR_H16 - see above.
+  * PREL31 and EHTYPE - see above. PCR_L16 and PCR_H16 are applied now.
   * `START`, `END`, `SIZE`, `LOAD_START` and the other address operators, `GROUP`, `UNION`,
     `PAGE`, `type = COPY|DSECT|NOLOAD`, and expression assignments in a `SECTIONS` entry. The
     input-section list and subsection form are read now; the rest are not.

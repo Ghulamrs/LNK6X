@@ -36,6 +36,19 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
     case R_C6000_PCR_S12: field(p, (V - (P & ~0x1Fu)) >> 2, 16, 12); break;
     case R_C6000_PCR_S10: field(p, (V - (P & ~0x1Fu)) >> 2, 13, 10); break;
     case R_C6000_PCR_S7:  field(p, (V - (P & ~0x1Fu)) >> 2, 16, 7); break;
+    /*  **The MVKL/MVKH pair of `$PCR_OFFSET(dest, base)`**, and the addend is what says
+     *  which base. TI's assembler writes `A = (P & ~31) - base`, so the base label comes
+     *  back as `(P & ~31) - A`, and the value is measured from *that label's* fetch
+     *  packet - not from the instruction's. `r_addend` is therefore not added to S.
+     *
+     *  Read off the three sites in tdeh_uwentry_c6000.obj against q07-lib.out, where
+     *  base_pcr (+0x08) serves two and cxa_base_pcr (+0xB4) the third: the wanted fields
+     *  are 1260, 0720 and 1660, and this gives all three. Both `S + A - P` and
+     *  `S + A - (P & ~31)` give none of them - see docs/known.md. */
+    case R_C6000_PCR_L16:
+        field(p, (S - (((P & ~0x1Fu) - (u32)A) & ~0x1Fu)) & 0xFFFFu, 7, 16); break;
+    case R_C6000_PCR_H16:
+        field(p, ((S - (((P & ~0x1Fu) - (u32)A) & ~0x1Fu)) >> 16) & 0xFFFFu, 7, 16); break;
     default: {
         /*  Name it. `relocation type 30 is not handled` sent a reader to the ABI to find out
          *  which one that was; these four are the ones the runtime and the C++ unwind tables
@@ -44,8 +57,7 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
         switch (type) {
         case R_C6000_PREL31:  nm = "PREL31";  break;
         case R_C6000_EHTYPE:  nm = "EHTYPE";  break;
-        case R_C6000_PCR_H16: nm = "PCR_H16"; break;
-        case R_C6000_PCR_L16: nm = "PCR_L16"; break;
+
         default: break;
         }
         char b[96];
