@@ -85,7 +85,12 @@ q05-model-rom, q07-lib and q16-ride link now and none of the three is byte-ident
 difference below is a rule read off the oracle's map or image and not yet implemented, and
 they compound, so the three are not useful as regression tests until the first few are in.
 
-  * **No `.cinit` table** - but the shape of one is no longer unknown (read 2026-09-22).
+  * ~~No `.cinit` table~~ - **composed since 2026-09-22**, and the notes below are what it
+    was built from. What is still not identical to lnk6x's is the *order of contributions
+    inside* an output section, which is the layout difference listed further down: q18's
+    `.fardata` comes out with its words in a different order, so its compressed image
+    differs even though it decodes to the right 32 bytes. q05, whose `.data` is one word,
+    is byte-identical but for the two handler addresses, which move with the layout.
     Under `--rom_model` lnk6x composes the load images, a handler table of one pointer per
     decompressor, and a cinit table of `{load, run}` records, and brackets the two with
     `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`. This linker says on stderr

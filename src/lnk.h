@@ -197,7 +197,8 @@ struct Link {
     int lnk_mod;                 /* the module holding the names the linker defines, or -1 */
     std::string err;
 
-    Link() : entry_addr(0), static_base(0), lnk_mod(-1) {}
+    Link() : entry_addr(0), static_base(0), lnk_mod(-1),
+             cinit_table_off(0), cinit_recs_off(0), cinit_in(-1) {}
 
     bool run();
     bool read_inputs();
@@ -207,6 +208,18 @@ struct Link {
     void set_linker_symbols();
     bool eliminate();
     bool build_sections();
+    /*  --rom_model: the load images and the table that drives them. compose_cinit runs
+     *  before allocation, because .cinit's size decides where everything after it goes;
+     *  place_cinit runs after, when the addresses it must write down exist. */
+    bool compose_cinit();
+    void place_cinit();
+    /*  Where each piece of .cinit sits, as offsets into it, and what the records say. */
+    struct CinitRec { u32 image;      /* offset of the load image */
+                      int out; };     /* the output section it initialises */
+    std::vector<CinitRec> cinit_recs;
+    std::vector<std::string> cinit_handlers;
+    u32 cinit_table_off, cinit_recs_off;
+    int cinit_in;                     /* index into `all` of the synthetic contribution */
     bool allocate();
     bool fix_up();
     bool write_image();
