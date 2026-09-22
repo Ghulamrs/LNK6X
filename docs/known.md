@@ -147,10 +147,17 @@ they compound, so the three are not useful as regression tests until the first f
     left to settle is when it emits a run rather than literals (q18 runs 64 identical bytes
     and leaves 64 varied ones alone), and whether it ever chooses `none` - q05 says it does
     not, even for four bytes.
-  * **The allocation order with a library is not the SECTIONS order.** q07's addresses come out
-    `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
-    `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
-    them `.text`, `.const`, ..., `.stack`, `.sysmem`. What decides it is unread.
+  * ~~The allocation order with a library is not the SECTIONS order~~ - **read and
+    implemented 2026-09-22.** It is **descending size**, with `.bss` first (q03:
+    `__TI_STATIC_BASE` points at it), `.cinit` and `.c6xabi.exidx` held to the end whatever
+    their size, and a section the file never names after all of those (q12's `.mybss`). A
+    tie goes to the name, ascending: q19 has `.const` and `.text` both 0x40 and lnk6x puts
+    `.const` first - and it cannot be the file's order, because q19 is linked twice from
+    command files that name the six sections differently and lnk6x lays them out
+    identically both times. Why those two are held back is not read, but both describe the
+    rest of the image - the load images carry run addresses, the index is sorted by
+    function address - so placing them among the others would decide their contents from
+    their own position. q19 went from 926 and 114 bytes differing to **5**.
   * ~~The input sections inside `.text` are not in input order~~ - **they are placed in
     descending size since 2026-09-22**, which q07's map shows for the whole of its run
     (0x640, 0x580, 0x4C0, 0x440, ...) and which applies to every output section, not just

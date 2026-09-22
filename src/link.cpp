@@ -565,6 +565,16 @@ struct NameKey {
     }
 };
 
+/*  The same question for whole output sections: bigger first, a tie by name. */
+struct BiggerOut {
+    const std::vector<OutSec> &outs;
+    explicit BiggerOut(const std::vector<OutSec> &o) : outs(o) {}
+    bool operator()(const std::pair<u32, int> &x, const std::pair<u32, int> &y) const {
+        if (x.first != y.first) return x.first < y.first;    /* ~size: smaller ~ is bigger */
+        return outs[x.second].name < outs[y.second].name;
+    }
+};
+
 struct BiggerPart {
     const std::vector<InSec *> &all;
     explicit BiggerPart(const std::vector<InSec *> &a) : all(a) {}
@@ -600,10 +610,46 @@ bool Link::allocate()
         }
     }
 
+    /*  **The order output sections are allocated in is descending size**, not the order
+     *  the command file names them. q07's run is .stack 0x4000, .text 0x3FC0, .sysmem
+     *  0x1000, .const 0x26A, .c6xabi.extab 0x7C, .fardata 0x20, .switch 0x14, and q18's
+     *  is the same with .data 0x80 in its place.
+     *
+     *  Two are held back to the end whatever their size, in the order the file names
+     *  them: `.cinit` and `.c6xabi.exidx`. Both are tables that describe the rest of the
+     *  image - the load images carry run addresses, the index is sorted by function
+     *  address - so a linker that placed them among the others would be deciding their
+     *  contents from their own position. q07 puts .cinit at 0x30 and .exidx at 0x148
+     *  after .switch at 0x14, which no size rule explains and this one does.
+     *
+     *  `.bss` still goes first: __TI_STATIC_BASE points at it, which q03 shows. */
     std::vector<int> order;
     int bi = out_index(".bss");
     if (bi >= 0 && !outs[bi].parts.empty()) order.push_back(bi);
-    for (size_t i = 0; i < outs.size(); i++) if ((int)i != bi) order.push_back((int)i);
+
+    std::vector<std::pair<u32, int> > rest;      /* -size, so a sort puts the big first */
+    std::vector<int> held, unnamed;
+    for (size_t i = 0; i < outs.size(); i++) {
+        if ((int)i == bi) continue;
+        /*  A section the command file never names comes after every one it does, whatever
+         *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
+        if (outs[i].run.empty()) { unnamed.push_back((int)i); continue; }
+        if (outs[i].name == ".cinit" || outs[i].name == ".c6xabi.exidx") { held.push_back((int)i); continue; }
+        u32 want = outs[i].reserve;
+        for (size_t p = 0; p < outs[i].parts.size(); p++) {
+            InSec *c = all[outs[i].parts[p]];
+            want = align_up(want, c->align) + c->size;
+        }
+        rest.push_back(std::make_pair(~want, (int)i));   /* ~ rather than -, for unsigned */
+    }
+    /*  **A tie between two output sections goes to the name, ascending** - q19 has .const
+     *  and .text both 0x40 and lnk6x puts .const first. It cannot be the command file's
+     *  order: q19 is linked twice, from flat.cmd and from order.cmd, which name the six
+     *  sections differently, and lnk6x lays them out identically both times. */
+    std::stable_sort(rest.begin(), rest.end(), BiggerOut(outs));
+    for (size_t i = 0; i < rest.size(); i++) order.push_back(rest[i].second);
+    for (size_t i = 0; i < held.size(); i++) order.push_back(held[i]);
+    for (size_t i = 0; i < unnamed.size(); i++) order.push_back(unnamed[i]);
 
     for (size_t k = 0; k < order.size(); k++) {
         OutSec &o = outs[order[k]];
