@@ -48,7 +48,16 @@ relocated words. Held against it (the section runs at 0xC00066E0):
 
 `S + A - P` gives 1258, 0718, 1634 and `S + A - (P & ~31)` gives 1258, 0718, 164C, so neither
 is it; the implied targets are S, S+0x40 and S+0x18, which is not a constant relation to the
-addend either. The same object's ABS_L16 and ABS_H16 in the same table read correctly with the
+addend either.
+
+**2026-09-22: `S - (P & ~31)` - the fetch packet, and the addend *not* added - fits two of the
+three exactly** (1260 and 1660) and misses the second by 0x40 (06E0 against 0720). That is
+better than either rule above, which fit none, and it says two things: the base is the fetch
+packet, and `r_addend` is not part of this relocation's value. What is left is one site out by
+exactly 0x40, which is not the addend there (+56 = 0x38). A fourth and fifth site would settle
+whether that 0x40 belongs to the symbol - `__TI_Unwind_Resume` may be being reached at its
+second fetch packet - or to the field. Until then the linker still refuses both types: a word
+it cannot justify is worse than a refusal, because the program links and then misbehaves. The same object's ABS_L16 and ABS_H16 in the same table read correctly with the
 bits-7..22 field, so the field is being read right. Until a rule fits all three, the linker
 refuses the relocation by name rather than writing a word it cannot justify. PREL31 (25) and
 EHTYPE (28) are refused for the same reason and have not been measured at all - PREL31 is in
