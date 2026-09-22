@@ -104,6 +104,17 @@ bool Link::take_module(int mi)
         std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
         if (d == defined.end()) { defined[y.name] = std::make_pair(mi, (int)k); continue; }
         const Sym &had = mods[d->second.first].syms[d->second.second];
+        /*  **COMMON is a request for storage, not a definition**, so a real one replaces
+         *  it and two of them are not a redefinition. in_image counts SHN_COMMON as a
+         *  definition - which is what puts it in this table at all - and without this the
+         *  linker's own .bss allocation of parmbuf read as a second definition of it, and
+         *  take_module gave up there. Every symbol after it was then never recorded, so
+         *  __TI_STACK_END and the rest of the linker's own names went missing. */
+        if (had.shndx == SHN_COMMON && y.shndx != SHN_COMMON) {
+            d->second = std::make_pair(mi, (int)k);
+            continue;
+        }
+        if (y.shndx == SHN_COMMON) continue;
         if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL) {
             d->second = std::make_pair(mi, (int)k);
             continue;
@@ -251,7 +262,16 @@ void Link::add_linker_symbols()
         for (size_t k = 0; k < mods[mi].syms.size(); k++) {
             const Sym &y = mods[mi].syms[k];
             if (y.shndx != SHN_COMMON || y.name.empty()) continue;
-            if (defined.find(y.name) != defined.end()) continue;
+            /*  **A real definition takes precedence, and COMMON is not one.** in_image
+             *  counts SHN_COMMON as a definition, so take_module has already put every
+             *  one of these in `defined` - skipping on that alone left the runtime's
+             *  parmbuf with no storage, and sym_addr then refused it as "names no
+             *  section". Only a definition that has a section wins here. */
+            std::map<std::string, std::pair<int, int> >::const_iterator d =
+                defined.find(y.name);
+            if (d != defined.end() &&
+                mods[d->second.first].syms[d->second.second].shndx != SHN_COMMON)
+                continue;
             std::map<std::string, std::pair<u32, u32> >::iterator it = common.find(y.name);
             u32 al = y.value ? y.value : 1;
             if (it == common.end()) common[y.name] = std::make_pair(y.size, al);
@@ -269,12 +289,14 @@ void Link::add_linker_symbols()
         InSec null_sec;
         null_sec.name = ""; null_sec.type = SHT_NULL; null_sec.flags = 0; null_sec.size = 0;
         null_sec.align = 1; null_sec.entsize = 0; null_sec.module = -1; null_sec.index = 0;
-        null_sec.live = false; null_sec.out = -1; null_sec.addr = 0; null_sec.load = 0;
+        null_sec.live = false; null_sec.dropped = false;
+        null_sec.out = -1; null_sec.addr = 0; null_sec.load = 0;
         m.secs.push_back(null_sec);
         InSec bss;
         bss.name = ".bss"; bss.type = SHT_NOBITS; bss.flags = SHF_ALLOC | SHF_WRITE;
         bss.size = 0; bss.align = 1; bss.entsize = 0; bss.module = -1; bss.index = 1;
-        bss.live = false; bss.out = -1; bss.addr = 0; bss.load = 0;
+        bss.live = false; bss.dropped = false;
+        bss.out = -1; bss.addr = 0; bss.load = 0;
         for (std::map<std::string, std::pair<u32, u32> >::iterator it = common.begin();
              it != common.end(); ++it) {
             u32 al = it->second.second;
@@ -296,6 +318,10 @@ void Link::add_linker_symbols()
         m.syms.push_back(y);
     }
     for (int i = 0; table[i].name; i++) {
+        if (opt.verbose)
+            fprintf(stderr, "linker symbol %s: wanted=%d defined=%d\n", table[i].name,
+                    (int)wanted[table[i].name],
+                    (int)(defined.find(table[i].name) != defined.end()));
         if (!wanted[table[i].name]) continue;
         Sym y;
         y.name = table[i].name;
@@ -307,7 +333,14 @@ void Link::add_linker_symbols()
     }
     mods.push_back(m);
     lnk_mod = (int)mods.size() - 1;
-    take_module(lnk_mod);      /* its names were all absent, so this cannot find a duplicate */
+    /*  **Its result is checked.** It was not, and a `return false` inside it - which is
+     *  how it reports a redefinition - stopped it partway through this module's symbols
+     *  and left the rest unrecorded, with no message at all. */
+    /*  A redefinition here would be the linker's own name against an object's, which
+     *  the `always` and `wanted` guards above already rule out - but if it ever happens
+     *  it is reported, not swallowed: the ignored result left every symbol after the
+     *  first collision unrecorded, and said nothing. */
+    if (!take_module(lnk_mod)) fprintf(stderr, "lnk6x: %s\n", err.c_str());
 }
 
 /*  Their values, once the sections have addresses. `.stack` and `.sysmem` are the linker's

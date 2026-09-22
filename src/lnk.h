@@ -68,7 +68,11 @@ struct InSec {
     int  module;
     int  index;                  /* its section number inside that object */
     bool live;                   /* survived unused-section elimination */
-    bool dropped;                /* a second copy of a group section: another object had it */
+    /*  **Initialised, because nothing else initialises it.** The two sections
+     *  add_linker_symbols builds set every field it could think of and not this one, so
+     *  take_module read uninitialised memory and skipped the linker's own COMMON symbols
+     *  when it happened to be non-zero - which failed one program and not the next. */
+    bool dropped = false;        /* a second copy of a group section: another object had it */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */
     u32  load;                   /* load address: the same unless the command file parts them */
