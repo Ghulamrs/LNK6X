@@ -85,11 +85,32 @@ q05-model-rom, q07-lib and q16-ride link now and none of the three is byte-ident
 difference below is a rule read off the oracle's map or image and not yet implemented, and
 they compound, so the three are not useful as regression tests until the first few are in.
 
-  * **No `.cinit` table.** Under `--rom_model` lnk6x composes the compressed load images, a
-    handler table of one pointer per decompressor, and a cinit table of `{load, run}` records,
-    and brackets the two with `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`.
-    q05-model-rom shows the shape at 0xC00002E8. This linker says on stderr that it composes
-    none of it and leaves the bounds empty, rather than writing a ram-model image quietly.
+  * **No `.cinit` table** - but the shape of one is no longer unknown (read 2026-09-22).
+    Under `--rom_model` lnk6x composes the load images, a handler table of one pointer per
+    decompressor, and a cinit table of `{load, run}` records, and brackets the two with
+    `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`. This linker says on stderr
+    that it composes none of it, rather than writing a ram-model image quietly.
+
+    **The layout, off q05-model-rom and q18-cinit.** `.cinit` holds, in order: every load
+    image; then the handler table, 4-aligned, one 32-bit pointer per decompressor, which
+    `__TI_Handler_Table_Base/Limit` bracket; then padding; then the records, 8-aligned, two
+    words each `{load, run}`, which `__TI_CINIT_Base/Limit` bracket. The initialised section
+    itself becomes SHT_NOBITS at its run address - q05's `.data` is type 8 in the image - so
+    its bytes live only in `.cinit`. The first byte of a load image is the handler's index
+    into that table. Both samples list two handlers, `__TI_decompress_rle24` at 0 and
+    `__TI_decompress_none` at 1, and both choose rle24 even for four bytes.
+
+    **What `__TI_decompress_none` expects**, read from its own instructions in q05.out
+    (`dis6x`, at 0xC0000280) rather than guessed:
+
+        ADD 3,A4,A3 ; LDW *+A3[0],A6 ; ADD 7,A4,B5 ; MV B4,A4 ; MV B5,B4 ; B memcpy
+
+    that is `memcpy(run, load + 7, *(u32 *)(load + 3))`. So an uncompressed image is one
+    index byte, two of padding, a 32-bit length, then the bytes - and its load address must
+    be **1 modulo 4**, or the length word is unaligned. That is a whole format, and it is
+    enough to compose a correct table without implementing TI's compressor; what it will not
+    give is an image byte-identical to lnk6x's, which chooses rle24. `__TI_decompress_rle24`
+    tail-calls `__TI_decompress_rle_core` with 1 in A6 and its stream is still unread.
   * **The allocation order with a library is not the SECTIONS order.** q07's addresses come out
     `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
     `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
