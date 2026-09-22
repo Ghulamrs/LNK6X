@@ -31,6 +31,38 @@ enum { STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2 };
 enum { STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2, STT_SECTION = 3, STT_FILE = 4 };
 enum { SHN_UNDEF = 0, SHN_ABS = 0xFFF1u, SHN_COMMON = 0xFFF2u };
 
+/*  **The C6000 ABI has a small COMMON of its own**, in the processor's own range rather
+ *  than SHN_COMMON: one index for an unstated alignment and four that state it. The
+ *  runtime's `__dso_handle` is SHN_C6000_SCOMMON, and a linker that knows only
+ *  SHN_COMMON leaves it with no storage and then refuses it as naming no section. */
+enum {
+    SHN_C6000_SCOMMON       = 0xFF00u,
+    SHN_C6000_SCOMMON_BYTE  = 0xFF01u,
+    SHN_C6000_SCOMMON_HALF  = 0xFF02u,
+    SHN_C6000_SCOMMON_WORD  = 0xFF03u,
+    SHN_C6000_SCOMMON_DWORD = 0xFF04u
+};
+
+/*  Every shape of COMMON: a request for storage the linker must place, not a definition. */
+inline bool is_common(u16 shndx)
+{
+    return shndx == SHN_COMMON ||
+           (shndx >= SHN_C6000_SCOMMON && shndx <= SHN_C6000_SCOMMON_DWORD);
+}
+
+/*  What it must be aligned to: the four sized indices say it, and the other two carry it
+ *  in the symbol's value, which is what `st_value` means for a COMMON symbol. */
+inline u32 common_align(u16 shndx, u32 value)
+{
+    switch (shndx) {
+    case SHN_C6000_SCOMMON_BYTE:  return 1;
+    case SHN_C6000_SCOMMON_HALF:  return 2;
+    case SHN_C6000_SCOMMON_WORD:  return 4;
+    case SHN_C6000_SCOMMON_DWORD: return 8;
+    default:                      return value ? value : 1;
+    }
+}
+
 /*  The C6000 relocations the bed produces. The numbering is the C6000 ELF ABI's; the three
  *  that appear in tests/ref are PCR_S21 for a branch, and ABS_L16 and ABS_H16 for the MVKL and
  *  MVKH that carry a 32-bit address in two halves. */

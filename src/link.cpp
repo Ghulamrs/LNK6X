@@ -77,7 +77,7 @@ static std::string basename_of(const std::string &p)
 bool Link::in_image(int mi, int sym) const
 {
     const Sym &y = mods[mi].syms[sym];
-    if (y.shndx == SHN_ABS || y.shndx == SHN_COMMON) return true;
+    if (y.shndx == SHN_ABS || is_common(y.shndx)) return true;
     if (y.shndx >= mods[mi].secs.size()) return false;
     return (mods[mi].secs[y.shndx].flags & SHF_ALLOC) != 0;
 }
@@ -110,11 +110,11 @@ bool Link::take_module(int mi)
          *  linker's own .bss allocation of parmbuf read as a second definition of it, and
          *  take_module gave up there. Every symbol after it was then never recorded, so
          *  __TI_STACK_END and the rest of the linker's own names went missing. */
-        if (had.shndx == SHN_COMMON && y.shndx != SHN_COMMON) {
+        if (is_common(had.shndx) && !is_common(y.shndx)) {
             d->second = std::make_pair(mi, (int)k);
             continue;
         }
-        if (y.shndx == SHN_COMMON) continue;
+        if (is_common(y.shndx)) continue;
         if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL) {
             d->second = std::make_pair(mi, (int)k);
             continue;
@@ -261,7 +261,7 @@ void Link::add_linker_symbols()
     for (size_t mi = 0; mi < mods.size(); mi++)
         for (size_t k = 0; k < mods[mi].syms.size(); k++) {
             const Sym &y = mods[mi].syms[k];
-            if (y.shndx != SHN_COMMON || y.name.empty()) continue;
+            if (!is_common(y.shndx) || y.name.empty()) continue;
             /*  **A real definition takes precedence, and COMMON is not one.** in_image
              *  counts SHN_COMMON as a definition, so take_module has already put every
              *  one of these in `defined` - skipping on that alone left the runtime's
@@ -270,10 +270,10 @@ void Link::add_linker_symbols()
             std::map<std::string, std::pair<int, int> >::const_iterator d =
                 defined.find(y.name);
             if (d != defined.end() &&
-                mods[d->second.first].syms[d->second.second].shndx != SHN_COMMON)
+                !is_common(mods[d->second.first].syms[d->second.second].shndx))
                 continue;
             std::map<std::string, std::pair<u32, u32> >::iterator it = common.find(y.name);
-            u32 al = y.value ? y.value : 1;
+            u32 al = common_align(y.shndx, y.value);
             if (it == common.end()) common[y.name] = std::make_pair(y.size, al);
             else {
                 if (y.size > it->second.first)  it->second.first = y.size;
