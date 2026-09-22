@@ -120,19 +120,28 @@ they compound, so the three are not useful as regression tests until the first f
     what makes it 24-bit rather than 16), and a count below four means the run is of E
     itself, so an escape can be emitted without one. dst advances by the count each time.
 
-    **That is the format, and it is still not enough to match lnk6x byte for byte**, which
-    is worth saying plainly: a decompressor says what is *legal*, not what the compressor
-    *chooses*. Which escape byte lnk6x picks, when it prefers a run to literals, when it
-    reaches for the long form, and when it gives up and uses `none` at all are encoder
-    decisions that are not in this code. q05 is the evidence: four bytes of data, and lnk6x
-    still chose rle24 - `00 00 44 33 22 11 00 00 00 00 00 00` - where a reasonable encoder
-    would have used `none`. Byte-identity here needs TI's compressor, not its decompressor.
+    **The caller convention, from `_auto_init_elf` in q18.out (0xC0006200).** It takes the
+    record count as `(__TI_CINIT_Limit - __TI_CINIT_Base) / 8`, walks the records two words
+    at a time, and then:
 
-    There is also a caller convention still unread: `none` wants its length at `load + 3`,
-    which is only aligned when the record's load address is 1 modulo 4 (q18's second record
-    is), while the rle core reads *its* first byte as the escape - and the record's first
-    byte is the handler index. One of the two is reached with the index already skipped, and
-    only `__TI_auto_init` says which.
+        LDB *+A4[0],A3 ; ADD A4,1,A4 ; LDW *+A11[A3],A3 ; B A3
+
+    - the index is `load[0]`, and **the handler is called with `load + 1`**. So `none` finds
+    its length at `load + 4` and its bytes at `load + 8`, and an rle stream's escape byte is
+    `load[1]`.
+
+    **With that, both oracle images decode exactly**, which is the check that the reading is
+    right: q05's `00 00 44 33 22 11 ...` is handler 0, escape 0x00, four literals
+    `44 33 22 11` - its `.data` word - then escape+0 to end; q18's is handler 0, escape 0x40,
+    a run of 64 x 0x5A, 64 literals, then escape+0. A count of zero is the terminator, not a
+    long form; the long form is reached another way and neither sample needs it.
+
+    **And lnk6x's escape byte is the smallest value absent from the section's data** - 0x00
+    for q05, whose bytes are 44 33 22 11, and 0x40 for q18, whose bytes are 0x5A and 0x00
+    through 0x3F. Both samples agree, which makes byte-identity reachable after all: what is
+    left to settle is when it emits a run rather than literals (q18 runs 64 identical bytes
+    and leaves 64 varied ones alone), and whether it ever chooses `none` - q05 says it does
+    not, even for four bytes.
   * **The allocation order with a library is not the SECTIONS order.** q07's addresses come out
     `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
     `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
