@@ -151,8 +151,15 @@ they compound, so the three are not useful as regression tests until the first f
     `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
     `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
     them `.text`, `.const`, ..., `.stack`, `.sysmem`. What decides it is unread.
-  * **The input sections inside `.text` are not in input order either.** q07's are in
-    descending size for the whole of the run. One image says so.
+  * ~~The input sections inside `.text` are not in input order~~ - **they are placed in
+    descending size since 2026-09-22**, which q07's map shows for the whole of its run
+    (0x640, 0x580, 0x4C0, 0x440, ...) and which applies to every output section, not just
+    `.text`. What is *not* settled is how lnk6x breaks a tie between two of a size: it
+    keeps some order of its own, and this linker keeps the order the contributions were
+    read in, which a stable sort preserves. q18's `.fardata` has three four-byte parts and
+    lnk6x puts `_lock.obj`'s two before `tdeh_cpp_abi.obj`'s where this linker does the
+    reverse - so the tie-break is the order members come out of the archive, and matching
+    it means matching lnk6x's library search, not its layout.
   * **`.c6xabi.exidx` is not sorted.** lnk6x sorts the index by function address and brackets
     it with `__TI_UNWIND_TABLE_START/END`, which this linker defines but does not sort behind.
   * **The attributes blob is still a constant** - see above - and q07's is the merge of five

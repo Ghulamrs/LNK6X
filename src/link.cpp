@@ -15,6 +15,7 @@
  *    offsets     file offsets in address order, not in section-table order
  */
 #include "lnk.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -545,6 +546,15 @@ bool Link::build_sections()
     return true;
 }
 
+namespace {
+/*  Descending size, for the order lnk6x lays contributions out in. */
+struct BiggerPart {
+    const std::vector<InSec *> &all;
+    explicit BiggerPart(const std::vector<InSec *> &a) : all(a) {}
+    bool operator()(int x, int y) const { return all[x]->size > all[y]->size; }
+};
+} // namespace
+
 /* ------------------------------------------------------------- allocation */
 
 bool Link::allocate()
@@ -615,6 +625,11 @@ bool Link::allocate()
         at = align_up(at, o.align);
         for (size_t i = 0; i < cmd.secs.size(); i++)
             if (cmd.secs[i].name == o.name && cmd.secs[i].has_align) at = align_up(at, cmd.secs[i].align);
+        /*  **lnk6x places a section's contributions in descending size**, not in the order
+         *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
+         *  whole of the run, and its map is the evidence. Ties keep the order they arrived
+         *  in, which is what a stable sort leaves them in. */
+        std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
         o.addr = at;
         for (size_t p = 0; p < o.parts.size(); p++) {
             InSec *c = all[o.parts[p]];

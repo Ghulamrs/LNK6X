@@ -60,14 +60,15 @@ else
     printf '%-22s FAIL  %s\n' libdir-search "$(head -1 "$OUT/bad-libdir.log")"; fail=$((fail+1))
 fi
 
-# --rom_model has no .cinit table behind it yet, and has to say so rather than write a
-# ram-model image under a rom-model name (the review's N9).
-"$LNK" "$CMD/flat.cmd" --rom_model -o "$OUT/rom.out" "$REF/q01-bare.obj" \
-    > "$OUT/bad-rommodel.log" 2>&1
-if grep -q 'no .cinit table' "$OUT/bad-rommodel.log"; then
-    printf '%-22s ok\n' rom-model-says-so
+# --rom_model composes a .cinit table now, so what this asks has turned round: it used to
+# check the linker *said* it composed none (the review's N9). q01-bare has no initialised
+# data at all, so the right answer for it is a link that succeeds and says nothing - a
+# table with no records is not an error, and neither is a warning nobody needs.
+if "$LNK" "$CMD/flat.cmd" --rom_model -o "$OUT/rom.out" "$REF/q01-bare.obj" \
+        > "$OUT/bad-rommodel.log" 2>&1 && [ ! -s "$OUT/bad-rommodel.log" ]; then
+    printf '%-22s ok\n' rom-model-quiet
 else
-    printf '%-22s FAIL  said nothing about .cinit\n' rom-model-says-so; fail=$((fail+1))
+    printf '%-22s FAIL  %s\n' rom-model-quiet "$(head -1 "$OUT/bad-rommodel.log")"; fail=$((fail+1))
 fi
 
 echo "---"
