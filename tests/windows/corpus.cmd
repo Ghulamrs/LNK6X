@@ -14,11 +14,7 @@ if "%~1"=="" (echo corpus.cmd: needs the tree root & exit /b 2)
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" >nul
 if errorlevel 1 (echo corpus.cmd: no vcvars64 & exit /b 1)
 if "%CGT%"=="" set CGT=C:\ti\ccsv7\tools\compiler\ti-cgt-c6000_8.2.2
-rem  The EH runtime is built once by mklib and lives where RIDE put it; the old
-rem  default under Documents\VM6747 no longer exists, and every link then failed
-rem  with "rts6740_elf_eh.lib: cannot open" - which reads as a linker fault and
-rem  is a path. TILIB= overrides it.
-if "%TILIB%"=="" set TILIB=%LOCALAPPDATA%\RStudio\tilib
+if "%TILIB%"=="" set TILIB=C:\Users\GRA\Documents\VM6747\tilib
 set ASM6X=C:\Program Files\RIDE 4.0\bin\asm6x.exe
 if not "%ASM6XEXE%"=="" set ASM6X=%ASM6XEXE%
 if not exist "%ASM6X%" (echo corpus.cmd: no asm6x at %ASM6X% & exit /b 1)

@@ -266,11 +266,6 @@ bool Link::write_image()
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
         if (c->data.empty() || c->out < 0) continue;
-        /*  **A section whose bytes moved into .cinit carries none of its own.** Its
-         *  contributions still hold the data - fix_up needs them, and so does the image
-         *  composed from them - but the section is SHT_NOBITS now and owns no file space,
-         *  so writing them would land on whatever took that offset instead. */
-        if (outs[c->out].type == SHT_NOBITS) continue;
         u32 at = outs[c->out].offset + (c->addr - outs[c->out].addr);
         if (at + c->data.size() > f.size()) { err = "a section lands past the end of the file"; return false; }
         memcpy(&f[at], &c->data[0], c->data.size());

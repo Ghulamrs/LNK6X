@@ -19,25 +19,16 @@ bool Link::run()
         opt.ram_model = !opt.rom_model;
     }
     if (!opt.entry_given && !cmd.entry.empty()) opt.entry = cmd.entry;
+    /*  --rom_model asks for a .cinit table this linker does not compose yet, so say so
+     *  rather than write a ram-model image under a rom-model name (the review's N9). */
+    if (opt.rom_model)
+        fprintf(stderr, "lnk6x: --rom_model: no .cinit table is composed yet - the image is "
+                        "laid out as for --ram_model and its cinit bounds are empty\n");
     if (!read_inputs())    return false;
     if (!eliminate())      return false;
     if (!build_sections()) return false;
     if (!allocate())       return false;
     if (!fix_up())         return false;
-    /*  **--rom_model runs the middle of the link twice, and it has to.** A load image is
-     *  the section's bytes *after* relocation - .fardata is full of pointers - so the
-     *  images cannot be made until fix_up has run; but .cinit's size moves everything
-     *  after it, so once they are made the addresses are wrong and it must all be done
-     *  again. Relocation is idempotent here: every type writes its field rather than
-     *  adding to it, so the second pass computes the same words from the new addresses. */
-    if (opt.rom_model) {
-        if (!compose_cinit()) return false;
-        if (cinit_in >= 0) {
-            if (!allocate()) return false;
-            if (!fix_up())   return false;
-            place_cinit();
-        }
-    }
     return write_image();
 }
 
