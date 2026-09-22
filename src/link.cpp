@@ -547,11 +547,31 @@ bool Link::build_sections()
 }
 
 namespace {
-/*  Descending size, for the order lnk6x lays contributions out in. */
+
+/*  **Descending size, and a tie goes to the name.** The size is q07's map, plain enough.
+ *  The tie-break was not - it is neither the archive's order (46% of 171 ties, which is
+ *  chance) nor the module summary's - and it turned out to be the section's own name,
+ *  ascending, with one wrinkle: a bare `.text` sorts *after* every `.text:something`,
+ *  and the same for `.fardata`. 257 of 257 ties across four maps agree, the only
+ *  exclusions being `.c6xabi.exidx`, which lnk6x sorts by function address instead and
+ *  which this linker does not sort at all yet (docs/known.md). */
+struct NameKey {
+    bool bare;
+    const std::string *name;
+    explicit NameKey(const std::string &n) : bare(n.find(':') == std::string::npos), name(&n) {}
+    bool operator<(const NameKey &o) const {
+        if (bare != o.bare) return !bare;          /* a subsection comes first */
+        return *name < *o.name;
+    }
+};
+
 struct BiggerPart {
     const std::vector<InSec *> &all;
     explicit BiggerPart(const std::vector<InSec *> &a) : all(a) {}
-    bool operator()(int x, int y) const { return all[x]->size > all[y]->size; }
+    bool operator()(int x, int y) const {
+        if (all[x]->size != all[y]->size) return all[x]->size > all[y]->size;
+        return NameKey(all[x]->name) < NameKey(all[y]->name);
+    }
 };
 } // namespace
 
@@ -627,8 +647,8 @@ bool Link::allocate()
             if (cmd.secs[i].name == o.name && cmd.secs[i].has_align) at = align_up(at, cmd.secs[i].align);
         /*  **lnk6x places a section's contributions in descending size**, not in the order
          *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
-         *  whole of the run, and its map is the evidence. Ties keep the order they arrived
-         *  in, which is what a stable sort leaves them in. */
+         *  whole of the run, and its map is the evidence. A tie goes to the name - see
+         *  BiggerPart, which is where the reading of it is written down. */
         std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
         o.addr = at;
         for (size_t p = 0; p < o.parts.size(); p++) {

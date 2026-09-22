@@ -154,12 +154,12 @@ they compound, so the three are not useful as regression tests until the first f
   * ~~The input sections inside `.text` are not in input order~~ - **they are placed in
     descending size since 2026-09-22**, which q07's map shows for the whole of its run
     (0x640, 0x580, 0x4C0, 0x440, ...) and which applies to every output section, not just
-    `.text`. What is *not* settled is how lnk6x breaks a tie between two of a size: it
-    keeps some order of its own, and this linker keeps the order the contributions were
-    read in, which a stable sort preserves. q18's `.fardata` has three four-byte parts and
-    lnk6x puts `_lock.obj`'s two before `tdeh_cpp_abi.obj`'s where this linker does the
-    reverse - so the tie-break is the order members come out of the archive, and matching
-    it means matching lnk6x's library search, not its layout.
+    `.text`. **A tie goes to the section's own name, ascending, with a bare `.text` after
+    every `.text:something`** - and the same for `.fardata`. That was measured rather than
+    assumed: over 511 ties in four reference maps, the archive's own order agrees with
+    lnk6x 46% of the time (chance) and the module summary's no better, while this rule is
+    **257 of 257** on every tie outside `.c6xabi.exidx`. The exidx is excluded because
+    lnk6x sorts it by function address instead, which is the entry below this one.
   * **`.c6xabi.exidx` is not sorted.** lnk6x sorts the index by function address and brackets
     it with `__TI_UNWIND_TABLE_START/END`, which this linker defines but does not sort behind.
   * **The attributes blob is still a constant** - see above - and q07's is the merge of five
