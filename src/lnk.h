@@ -31,6 +31,38 @@ enum { STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2 };
 enum { STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2, STT_SECTION = 3, STT_FILE = 4 };
 enum { SHN_UNDEF = 0, SHN_ABS = 0xFFF1u, SHN_COMMON = 0xFFF2u };
 
+/*  **The C6000 ABI has a small COMMON of its own**, in the processor's own range rather
+ *  than SHN_COMMON: one index for an unstated alignment and four that state it. The
+ *  runtime's `__dso_handle` is SHN_C6000_SCOMMON, and a linker that knows only
+ *  SHN_COMMON leaves it with no storage and then refuses it as naming no section. */
+enum {
+    SHN_C6000_SCOMMON       = 0xFF00u,
+    SHN_C6000_SCOMMON_BYTE  = 0xFF01u,
+    SHN_C6000_SCOMMON_HALF  = 0xFF02u,
+    SHN_C6000_SCOMMON_WORD  = 0xFF03u,
+    SHN_C6000_SCOMMON_DWORD = 0xFF04u
+};
+
+/*  Every shape of COMMON: a request for storage the linker must place, not a definition. */
+inline bool is_common(u16 shndx)
+{
+    return shndx == SHN_COMMON ||
+           (shndx >= SHN_C6000_SCOMMON && shndx <= SHN_C6000_SCOMMON_DWORD);
+}
+
+/*  What it must be aligned to: the four sized indices say it, and the other two carry it
+ *  in the symbol's value, which is what `st_value` means for a COMMON symbol. */
+inline u32 common_align(u16 shndx, u32 value)
+{
+    switch (shndx) {
+    case SHN_C6000_SCOMMON_BYTE:  return 1;
+    case SHN_C6000_SCOMMON_HALF:  return 2;
+    case SHN_C6000_SCOMMON_WORD:  return 4;
+    case SHN_C6000_SCOMMON_DWORD: return 8;
+    default:                      return value ? value : 1;
+    }
+}
+
 /*  The C6000 relocations the bed produces. The numbering is the C6000 ELF ABI's; the three
  *  that appear in tests/ref are PCR_S21 for a branch, and ABS_L16 and ABS_H16 for the MVKL and
  *  MVKH that carry a 32-bit address in two halves. */
@@ -68,7 +100,11 @@ struct InSec {
     int  module;
     int  index;                  /* its section number inside that object */
     bool live;                   /* survived unused-section elimination */
-    bool dropped;                /* a second copy of a group section: another object had it */
+    /*  **Initialised, because nothing else initialises it.** The two sections
+     *  add_linker_symbols builds set every field it could think of and not this one, so
+     *  take_module read uninitialised memory and skipped the linker's own COMMON symbols
+     *  when it happened to be non-zero - which failed one program and not the next. */
+    bool dropped = false;        /* a second copy of a group section: another object had it */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */
     u32  load;                   /* load address: the same unless the command file parts them */
@@ -161,7 +197,8 @@ struct Link {
     int lnk_mod;                 /* the module holding the names the linker defines, or -1 */
     std::string err;
 
-    Link() : entry_addr(0), static_base(0), lnk_mod(-1) {}
+    Link() : entry_addr(0), static_base(0), lnk_mod(-1),
+             cinit_table_off(0), cinit_recs_off(0), cinit_in(-1) {}
 
     bool run();
     bool read_inputs();
@@ -171,6 +208,18 @@ struct Link {
     void set_linker_symbols();
     bool eliminate();
     bool build_sections();
+    /*  --rom_model: the load images and the table that drives them. compose_cinit runs
+     *  before allocation, because .cinit's size decides where everything after it goes;
+     *  place_cinit runs after, when the addresses it must write down exist. */
+    bool compose_cinit();
+    void place_cinit();
+    /*  Where each piece of .cinit sits, as offsets into it, and what the records say. */
+    struct CinitRec { u32 image;      /* offset of the load image */
+                      int out; };     /* the output section it initialises */
+    std::vector<CinitRec> cinit_recs;
+    std::vector<std::string> cinit_handlers;
+    u32 cinit_table_off, cinit_recs_off;
+    int cinit_in;                     /* index into `all` of the synthetic contribution */
     bool allocate();
     bool fix_up();
     bool write_image();

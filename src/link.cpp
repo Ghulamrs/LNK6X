@@ -15,6 +15,7 @@
  *    offsets     file offsets in address order, not in section-table order
  */
 #include "lnk.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -77,7 +78,7 @@ static std::string basename_of(const std::string &p)
 bool Link::in_image(int mi, int sym) const
 {
     const Sym &y = mods[mi].syms[sym];
-    if (y.shndx == SHN_ABS || y.shndx == SHN_COMMON) return true;
+    if (y.shndx == SHN_ABS || is_common(y.shndx)) return true;
     if (y.shndx >= mods[mi].secs.size()) return false;
     return (mods[mi].secs[y.shndx].flags & SHF_ALLOC) != 0;
 }
@@ -104,6 +105,17 @@ bool Link::take_module(int mi)
         std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
         if (d == defined.end()) { defined[y.name] = std::make_pair(mi, (int)k); continue; }
         const Sym &had = mods[d->second.first].syms[d->second.second];
+        /*  **COMMON is a request for storage, not a definition**, so a real one replaces
+         *  it and two of them are not a redefinition. in_image counts SHN_COMMON as a
+         *  definition - which is what puts it in this table at all - and without this the
+         *  linker's own .bss allocation of parmbuf read as a second definition of it, and
+         *  take_module gave up there. Every symbol after it was then never recorded, so
+         *  __TI_STACK_END and the rest of the linker's own names went missing. */
+        if (is_common(had.shndx) && !is_common(y.shndx)) {
+            d->second = std::make_pair(mi, (int)k);
+            continue;
+        }
+        if (is_common(y.shndx)) continue;
         if ((had.info >> 4) == STB_WEAK && (y.info >> 4) == STB_GLOBAL) {
             d->second = std::make_pair(mi, (int)k);
             continue;
@@ -164,6 +176,18 @@ bool Link::read_inputs()
         std::vector<std::string> want;
         std::map<std::string, bool> asked;
         if (defined.find(opt.entry) == defined.end()) { want.push_back(opt.entry); asked[opt.entry] = true; }
+        /*  **The decompressors the cinit table names.** Nothing in the program calls them -
+         *  the startup code reaches them through the handler table this linker writes - so
+         *  without asking for them here they are never pulled out of the runtime, and the
+         *  table would point at nothing. */
+        if (opt.rom_model) {
+            static const char *const kHandlers[] = { "__TI_decompress_rle24",
+                                                     "__TI_decompress_none", 0 };
+            for (int h = 0; kHandlers[h]; h++)
+                if (defined.find(kHandlers[h]) == defined.end() && !asked[kHandlers[h]]) {
+                    want.push_back(kHandlers[h]); asked[kHandlers[h]] = true;
+                }
+        }
         for (size_t mi = 0; mi < mods.size(); mi++)
             for (size_t k = 0; k < mods[mi].syms.size(); k++) {
                 const Sym &y = mods[mi].syms[k];
@@ -250,10 +274,19 @@ void Link::add_linker_symbols()
     for (size_t mi = 0; mi < mods.size(); mi++)
         for (size_t k = 0; k < mods[mi].syms.size(); k++) {
             const Sym &y = mods[mi].syms[k];
-            if (y.shndx != SHN_COMMON || y.name.empty()) continue;
-            if (defined.find(y.name) != defined.end()) continue;
+            if (!is_common(y.shndx) || y.name.empty()) continue;
+            /*  **A real definition takes precedence, and COMMON is not one.** in_image
+             *  counts SHN_COMMON as a definition, so take_module has already put every
+             *  one of these in `defined` - skipping on that alone left the runtime's
+             *  parmbuf with no storage, and sym_addr then refused it as "names no
+             *  section". Only a definition that has a section wins here. */
+            std::map<std::string, std::pair<int, int> >::const_iterator d =
+                defined.find(y.name);
+            if (d != defined.end() &&
+                !is_common(mods[d->second.first].syms[d->second.second].shndx))
+                continue;
             std::map<std::string, std::pair<u32, u32> >::iterator it = common.find(y.name);
-            u32 al = y.value ? y.value : 1;
+            u32 al = common_align(y.shndx, y.value);
             if (it == common.end()) common[y.name] = std::make_pair(y.size, al);
             else {
                 if (y.size > it->second.first)  it->second.first = y.size;
@@ -269,12 +302,14 @@ void Link::add_linker_symbols()
         InSec null_sec;
         null_sec.name = ""; null_sec.type = SHT_NULL; null_sec.flags = 0; null_sec.size = 0;
         null_sec.align = 1; null_sec.entsize = 0; null_sec.module = -1; null_sec.index = 0;
-        null_sec.live = false; null_sec.out = -1; null_sec.addr = 0; null_sec.load = 0;
+        null_sec.live = false; null_sec.dropped = false;
+        null_sec.out = -1; null_sec.addr = 0; null_sec.load = 0;
         m.secs.push_back(null_sec);
         InSec bss;
         bss.name = ".bss"; bss.type = SHT_NOBITS; bss.flags = SHF_ALLOC | SHF_WRITE;
         bss.size = 0; bss.align = 1; bss.entsize = 0; bss.module = -1; bss.index = 1;
-        bss.live = false; bss.out = -1; bss.addr = 0; bss.load = 0;
+        bss.live = false; bss.dropped = false;
+        bss.out = -1; bss.addr = 0; bss.load = 0;
         for (std::map<std::string, std::pair<u32, u32> >::iterator it = common.begin();
              it != common.end(); ++it) {
             u32 al = it->second.second;
@@ -296,6 +331,10 @@ void Link::add_linker_symbols()
         m.syms.push_back(y);
     }
     for (int i = 0; table[i].name; i++) {
+        if (opt.verbose)
+            fprintf(stderr, "linker symbol %s: wanted=%d defined=%d\n", table[i].name,
+                    (int)wanted[table[i].name],
+                    (int)(defined.find(table[i].name) != defined.end()));
         if (!wanted[table[i].name]) continue;
         Sym y;
         y.name = table[i].name;
@@ -307,7 +346,14 @@ void Link::add_linker_symbols()
     }
     mods.push_back(m);
     lnk_mod = (int)mods.size() - 1;
-    take_module(lnk_mod);      /* its names were all absent, so this cannot find a duplicate */
+    /*  **Its result is checked.** It was not, and a `return false` inside it - which is
+     *  how it reports a redefinition - stopped it partway through this module's symbols
+     *  and left the rest unrecorded, with no message at all. */
+    /*  A redefinition here would be the linker's own name against an object's, which
+     *  the `always` and `wanted` guards above already rule out - but if it ever happens
+     *  it is reported, not swallowed: the ignored result left every symbol after the
+     *  first collision unrecorded, and said nothing. */
+    if (!take_module(lnk_mod)) fprintf(stderr, "lnk6x: %s\n", err.c_str());
 }
 
 /*  Their values, once the sections have addresses. `.stack` and `.sysmem` are the linker's
@@ -354,6 +400,22 @@ bool Link::eliminate()
     if (es.shndx >= em.secs.size()) { err = opt.entry + ": defined in no section"; return false; }
     em.secs[es.shndx].live = true;
     work.push_back(std::make_pair(e->second.first, (int)es.shndx));
+
+    /*  The decompressors are roots of their own under --rom_model: the handler table the
+     *  linker writes is the only thing that reaches them, and elimination cannot see it. */
+    if (opt.rom_model) {
+        static const char *const kHandlers[] = { "__TI_decompress_rle24",
+                                                 "__TI_decompress_none", 0 };
+        for (int h = 0; kHandlers[h]; h++) {
+            std::map<std::string, std::pair<int, int> >::iterator d = defined.find(kHandlers[h]);
+            if (d == defined.end()) continue;
+            Module &hm = mods[d->second.first];
+            u16 hx = hm.syms[d->second.second].shndx;
+            if (hx == 0 || hx >= hm.secs.size() || hm.secs[hx].live) continue;
+            hm.secs[hx].live = true;
+            work.push_back(std::make_pair(d->second.first, (int)hx));
+        }
+    }
 
     while (!work.empty()) {
         std::pair<int, int> at = work.back(); work.pop_back();
@@ -484,10 +546,53 @@ bool Link::build_sections()
     return true;
 }
 
+namespace {
+
+/*  **Descending size, and a tie goes to the name.** The size is q07's map, plain enough.
+ *  The tie-break was not - it is neither the archive's order (46% of 171 ties, which is
+ *  chance) nor the module summary's - and it turned out to be the section's own name,
+ *  ascending, with one wrinkle: a bare `.text` sorts *after* every `.text:something`,
+ *  and the same for `.fardata`. 257 of 257 ties across four maps agree, the only
+ *  exclusions being `.c6xabi.exidx`, which lnk6x sorts by function address instead and
+ *  which this linker does not sort at all yet (docs/known.md). */
+struct NameKey {
+    bool bare;
+    const std::string *name;
+    explicit NameKey(const std::string &n) : bare(n.find(':') == std::string::npos), name(&n) {}
+    bool operator<(const NameKey &o) const {
+        if (bare != o.bare) return !bare;          /* a subsection comes first */
+        return *name < *o.name;
+    }
+};
+
+/*  The same question for whole output sections: bigger first, a tie by name. */
+struct BiggerOut {
+    const std::vector<OutSec> &outs;
+    explicit BiggerOut(const std::vector<OutSec> &o) : outs(o) {}
+    bool operator()(const std::pair<u32, int> &x, const std::pair<u32, int> &y) const {
+        if (x.first != y.first) return x.first < y.first;    /* ~size: smaller ~ is bigger */
+        return outs[x.second].name < outs[y.second].name;
+    }
+};
+
+struct BiggerPart {
+    const std::vector<InSec *> &all;
+    explicit BiggerPart(const std::vector<InSec *> &a) : all(a) {}
+    bool operator()(int x, int y) const {
+        if (all[x]->size != all[y]->size) return all[x]->size > all[y]->size;
+        return NameKey(all[x]->name) < NameKey(all[y]->name);
+    }
+};
+} // namespace
+
 /* ------------------------------------------------------------- allocation */
 
 bool Link::allocate()
 {
+    /*  **Every range starts empty.** allocate() is run twice under --rom_model - once to
+     *  learn the sizes compose_cinit needs, and again once .cinit has its own - and `used`
+     *  accumulates, so without this the second pass would lay everything after the first. */
+    for (size_t i = 0; i < cmd.mem.size(); i++) cmd.mem[i].used = 0;
     /*  .bss goes first. It is not first in any command file the bed uses, and it still comes
      *  out at the origin in q03 - what decides it is that __TI_STATIC_BASE points at .bss, so
      *  the near region has to start where the range does. */
@@ -505,10 +610,46 @@ bool Link::allocate()
         }
     }
 
+    /*  **The order output sections are allocated in is descending size**, not the order
+     *  the command file names them. q07's run is .stack 0x4000, .text 0x3FC0, .sysmem
+     *  0x1000, .const 0x26A, .c6xabi.extab 0x7C, .fardata 0x20, .switch 0x14, and q18's
+     *  is the same with .data 0x80 in its place.
+     *
+     *  Two are held back to the end whatever their size, in the order the file names
+     *  them: `.cinit` and `.c6xabi.exidx`. Both are tables that describe the rest of the
+     *  image - the load images carry run addresses, the index is sorted by function
+     *  address - so a linker that placed them among the others would be deciding their
+     *  contents from their own position. q07 puts .cinit at 0x30 and .exidx at 0x148
+     *  after .switch at 0x14, which no size rule explains and this one does.
+     *
+     *  `.bss` still goes first: __TI_STATIC_BASE points at it, which q03 shows. */
     std::vector<int> order;
     int bi = out_index(".bss");
     if (bi >= 0 && !outs[bi].parts.empty()) order.push_back(bi);
-    for (size_t i = 0; i < outs.size(); i++) if ((int)i != bi) order.push_back((int)i);
+
+    std::vector<std::pair<u32, int> > rest;      /* -size, so a sort puts the big first */
+    std::vector<int> held, unnamed;
+    for (size_t i = 0; i < outs.size(); i++) {
+        if ((int)i == bi) continue;
+        /*  A section the command file never names comes after every one it does, whatever
+         *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
+        if (outs[i].run.empty()) { unnamed.push_back((int)i); continue; }
+        if (outs[i].name == ".cinit" || outs[i].name == ".c6xabi.exidx") { held.push_back((int)i); continue; }
+        u32 want = outs[i].reserve;
+        for (size_t p = 0; p < outs[i].parts.size(); p++) {
+            InSec *c = all[outs[i].parts[p]];
+            want = align_up(want, c->align) + c->size;
+        }
+        rest.push_back(std::make_pair(~want, (int)i));   /* ~ rather than -, for unsigned */
+    }
+    /*  **A tie between two output sections goes to the name, ascending** - q19 has .const
+     *  and .text both 0x40 and lnk6x puts .const first. It cannot be the command file's
+     *  order: q19 is linked twice, from flat.cmd and from order.cmd, which name the six
+     *  sections differently, and lnk6x lays them out identically both times. */
+    std::stable_sort(rest.begin(), rest.end(), BiggerOut(outs));
+    for (size_t i = 0; i < rest.size(); i++) order.push_back(rest[i].second);
+    for (size_t i = 0; i < held.size(); i++) order.push_back(held[i]);
+    for (size_t i = 0; i < unnamed.size(); i++) order.push_back(unnamed[i]);
 
     for (size_t k = 0; k < order.size(); k++) {
         OutSec &o = outs[order[k]];
@@ -550,6 +691,11 @@ bool Link::allocate()
         at = align_up(at, o.align);
         for (size_t i = 0; i < cmd.secs.size(); i++)
             if (cmd.secs[i].name == o.name && cmd.secs[i].has_align) at = align_up(at, cmd.secs[i].align);
+        /*  **lnk6x places a section's contributions in descending size**, not in the order
+         *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
+         *  whole of the run, and its map is the evidence. A tie goes to the name - see
+         *  BiggerPart, which is where the reading of it is written down. */
+        std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
         o.addr = at;
         for (size_t p = 0; p < o.parts.size(); p++) {
             InSec *c = all[o.parts[p]];
@@ -610,4 +756,194 @@ bool Link::fix_up()
         }
     }
     return true;
+}
+
+/* ------------------------------------------------------------- .cinit, --rom_model */
+
+namespace {
+
+/*  **lnk6x's escape byte is the smallest value the data does not contain**, which both
+ *  oracle images agree on: 0x00 for q05, whose four bytes are 44 33 22 11, and 0x40 for
+ *  q18, whose bytes are 0x5A and 0x00 through 0x3F. A byte that never occurs can introduce
+ *  a run without ever having to be escaped itself. */
+u8 escape_for(const std::vector<u8> &d)
+{
+    bool seen[256];
+    for (int i = 0; i < 256; i++) seen[i] = false;
+    for (size_t i = 0; i < d.size(); i++) seen[d[i]] = true;
+    for (int i = 0; i < 256; i++) if (!seen[i]) return (u8)i;
+    return 0;                         /* every value occurs: no escape is possible */
+}
+
+/*  The rle24 stream `__TI_decompress_rle_core` reads: the escape byte, then bytes that are
+ *  not it stored literally and ones that are it introducing a run of (count, value). A
+ *  count of zero ends the stream - q05 and q18 both finish that way.
+ *
+ *  A run costs three bytes and saves one per byte beyond that, so four identical bytes are
+ *  where it starts to pay; below that literals are shorter. q18 is the evidence such as it
+ *  is - sixty-four identical bytes run-encoded, sixty-four varied ones left alone. */
+void rle24_encode(const std::vector<u8> &d, u8 E, std::vector<u8> &out)
+{
+    out.push_back(E);
+    size_t i = 0;
+    while (i < d.size()) {
+        size_t j = i;
+        while (j < d.size() && d[j] == d[i] && j - i < 255) j++;
+        size_t run = j - i;
+        if (run >= 4) {
+            out.push_back(E);
+            out.push_back((u8)run);
+            out.push_back(d[i]);
+            i = j;
+            continue;
+        }
+        /*  A literal that happens to equal the escape has to be written as a run of one,
+         *  which is why an escape the data does not contain is worth choosing. */
+        if (d[i] == E) { out.push_back(E); out.push_back(1); out.push_back(d[i]); i++; continue; }
+        out.push_back(d[i]);
+        i++;
+    }
+    /*  **The terminator is the long form with a length of nothing**: the escape and three
+     *  zero bytes, four in all, not two. q18 says so - its first image runs 73 bytes, and
+     *  the index, the escape, one run of three and sixty-four literals account for 69. */
+    out.push_back(E);
+    out.push_back(0);
+    out.push_back(0);
+    out.push_back(0);
+}
+
+} // namespace
+
+/*  **The load images, and room for the table that drives them.** Under --rom_model an
+ *  initialised writable section is not in the image at its run address: its bytes go into
+ *  .cinit as a load image and the section itself becomes SHT_NOBITS, which is what q05's
+ *  `.data` is. This runs before allocation because .cinit's size moves everything after it.
+ */
+bool Link::compose_cinit()
+{
+    cinit_recs.clear();
+    cinit_handlers.clear();
+    std::vector<u8> image;
+
+    for (size_t oi = 0; oi < outs.size(); oi++) {
+        OutSec &o = outs[oi];
+        if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
+        if (o.type != SHT_PROGBITS || o.size == 0) continue;
+        if (o.name == ".cinit") continue;
+
+        /*  The section's bytes, laid out as they will be at run time. A hole between two
+         *  contributions is zero, as it is in the image. */
+        std::vector<u8> d(o.size, 0);
+        for (size_t k = 0; k < o.parts.size(); k++) {
+            InSec *c = all[o.parts[k]];
+            if (c->data.empty()) continue;
+            u32 at = c->addr - o.addr;
+            if (at + c->data.size() > d.size()) { err = o.name + ": a part lands outside it"; return false; }
+            memcpy(&d[at], &c->data[0], c->data.size());
+        }
+
+        CinitRec r;
+        r.image = (u32)image.size();
+        r.out = (int)oi;
+        cinit_recs.push_back(r);
+
+        image.push_back(0);                       /* the handler index, rle24 */
+        rle24_encode(d, escape_for(d), image);
+
+        o.type = SHT_NOBITS;                      /* its bytes live in .cinit now */
+        o.progbits = false;
+    }
+    if (cinit_recs.empty()) return true;
+
+    /*  Both samples list the two the runtime has, rle24 first, whether or not `none` is
+     *  used - so the index of rle24 is 0 and the table is two words. */
+    cinit_handlers.push_back("__TI_decompress_rle24");
+    cinit_handlers.push_back("__TI_decompress_none");
+
+    /*  The images are packed with no padding between them - q18's second begins at 0x49,
+     *  which is odd - and only the table is aligned, to four. The records are aligned to
+     *  eight, which is what makes __TI_CINIT_Base land on an eight-byte boundary. */
+    while (image.size() % 4) image.push_back(0);
+    cinit_table_off = (u32)image.size();
+    image.resize(image.size() + 4 * cinit_handlers.size(), 0);
+    while (image.size() % 8) image.push_back(0);
+    cinit_recs_off = (u32)image.size();
+    image.resize(image.size() + 8 * cinit_recs.size(), 0);
+
+    /*  A contribution of the linker's own, so write_image copies it like any other. */
+    InSec *c = new InSec();
+    c->name = ".cinit";
+    c->type = SHT_PROGBITS;
+    c->flags = SHF_ALLOC;
+    c->size = (u32)image.size();
+    c->align = 8;
+    c->entsize = 0;
+    c->module = lnk_mod;
+    c->index = 0;
+    c->live = true;
+    c->dropped = false;
+    c->out = -1;
+    c->addr = 0;
+    c->load = 0;
+    c->data.swap(image);
+    all.push_back(c);
+    cinit_in = (int)all.size() - 1;
+
+    /*  It has to join the output section like any other contribution, or allocate() will
+     *  not place it and write_image() will not copy it. `.cinit` is in the section table
+     *  build_sections works from, so it exists; it is simply empty until now. */
+    int oi = out_index(".cinit");
+    if (oi < 0) {
+        OutSec o;
+        o.name = ".cinit";
+        o.run = outs.empty() ? std::string() : outs[0].run;
+        outs.push_back(o);
+        oi = (int)outs.size() - 1;
+    }
+    OutSec &o = outs[oi];
+    o.parts.push_back(cinit_in);
+    c->out = oi;                  /* write_image copies by this, and skips a -1 */
+    o.progbits = true;
+    o.type = SHT_PROGBITS;
+    o.flags |= SHF_ALLOC;
+    o.pflags |= PF_R;
+    if (o.align < 8) o.align = 8;
+    return true;
+}
+
+/*  **The addresses, once there are any.** The handler table's pointers, each record's
+ *  {load, run}, and the four names that bracket the two - which are not the section's own
+ *  bounds, so set_linker_symbols' rule for them is overridden here. */
+void Link::place_cinit()
+{
+    if (cinit_in < 0) return;
+    InSec *c = all[cinit_in];
+    std::vector<u8> &d = c->data;
+    const u32 base = c->addr;
+
+    for (size_t i = 0; i < cinit_handlers.size(); i++) {
+        u32 a = 0;
+        std::map<std::string, std::pair<int, int> >::const_iterator it =
+            defined.find(cinit_handlers[i]);
+        if (it != defined.end()) sym_addr(it->second.first, it->second.second, a);
+        wr32(&d[cinit_table_off + 4 * i], a);
+    }
+    for (size_t i = 0; i < cinit_recs.size(); i++) {
+        wr32(&d[cinit_recs_off + 8 * i],     base + cinit_recs[i].image);
+        wr32(&d[cinit_recs_off + 8 * i + 4], outs[cinit_recs[i].out].addr);
+    }
+    if (lnk_mod < 0) return;
+    Module &m = mods[lnk_mod];
+    const int oi = out_index(".cinit");
+    for (size_t k = 0; k < m.syms.size(); k++) {
+        Sym &y = m.syms[k];
+        u32 v = 0;
+        if (y.name == "__TI_Handler_Table_Base")       v = base + cinit_table_off;
+        else if (y.name == "__TI_Handler_Table_Limit") v = base + cinit_table_off + 4 * (u32)cinit_handlers.size();
+        else if (y.name == "__TI_CINIT_Base")          v = base + cinit_recs_off;
+        else if (y.name == "__TI_CINIT_Limit")         v = base + cinit_recs_off + 8 * (u32)cinit_recs.size();
+        else continue;
+        y.value = v;
+        y.lnk_out = oi;
+    }
 }

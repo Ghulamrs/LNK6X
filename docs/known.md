@@ -36,9 +36,10 @@ by name or about the near region in general.
 packet and this linker matches lnk6x byte for byte, so `target - (P & ~31)` is the rule and
 `target - P` is not. The open question the earlier text left is closed.
 
-**PCR_L16 and PCR_H16 are not applied, and the bed says why not.** The only place they appear
-is `tdeh_uwentry_c6000.obj` in the runtime, three pairs of them, and q07-lib.out has the
-relocated words. Held against it (the section runs at 0xC00066E0):
+**PCR_L16 and PCR_H16 are applied, and the rule was read off the oracle's own bytes**
+(2026-09-22). They occur in one place only - `tdeh_uwentry_c6000.obj`, three pairs, and a
+scan of all 456 members of `rts6740_elf_eh.lib` says there is no fourth site. Held against
+q07-lib.out (the contribution runs at 0xC00066E0):
 
 | at | symbol | S | A | P | L16 field | H16 field |
 |----|--------|---|---|---|-----------|-----------|
@@ -46,13 +47,29 @@ relocated words. Held against it (the section runs at 0xC00066E0):
 | +040 | __TI_Unwind_Resume | C0006E00 | +56 | C0006720 | 0720 | 0000 |
 | +0B8 | __TI_cxa_end_cleanup | C0007DE0 | -20 | C0006798 | 1660 | 0000 |
 
-`S + A - P` gives 1258, 0718, 1634 and `S + A - (P & ~31)` gives 1258, 0718, 164C, so neither
-is it; the implied targets are S, S+0x40 and S+0x18, which is not a constant relation to the
-addend either. The same object's ABS_L16 and ABS_H16 in the same table read correctly with the
-bits-7..22 field, so the field is being read right. Until a rule fits all three, the linker
-refuses the relocation by name rather than writing a word it cannot justify. PREL31 (25) and
-EHTYPE (28) are refused for the same reason and have not been measured at all - PREL31 is in
-27 members of the runtime and in every C++ program's unwind tables.
+`S + A - P` gives 1258, 0718, 1634 and `S + A - (P & ~31)` gives 1258, 0718, 164C, so
+neither is it - and that is where this note stopped for a while. What settled it was the
+object's own labels: `base_pcr` at +0x08 and `cxa_base_pcr` at +0xB4, which are the base
+argument of TI's `$PCR_OFFSET(dest, base)`. The addend says which one:
+
+    A = (P & ~31) - base           so   base = (P & ~31) - A
+
+and the value is measured from *that label's* fetch packet, not the instruction's:
+
+    V = S - ( ((P & ~31) - A) & ~31 )
+
+1260, 0720, 1660 - all three. `r_addend` is therefore not added to S at all; it is how the
+base is carried. The same value's high half goes in H16, which is why all three read 0000.
+
+Two things made it findable. The object's *pre-link* words already hold the addend in the
+field (FFF8, 0038, FFF4), which is what identified the addend as a section-relative
+quantity rather than part of the target; and q17 links the same program from two ranges
+0x1234000 apart, where all three fields come out identical - so the value is a difference
+of two addresses that shift together, which rules out anything absolute.
+
+Verified in four C++ programs of the corpus (06-smart, 07-vector3, 08-cxx1lab,
+23-template-container): every site in this linker's own images satisfies the rule against
+that image's own addresses, and the corpus has no linker refusal left.
 
 **The `-l`/archive pull rule for weak names is assumed, not read.** An undefined *weak* name
 does not pull a member out of an archive here, which is what ELF means by weak and why the
@@ -68,17 +85,88 @@ q05-model-rom, q07-lib and q16-ride link now and none of the three is byte-ident
 difference below is a rule read off the oracle's map or image and not yet implemented, and
 they compound, so the three are not useful as regression tests until the first few are in.
 
-  * **No `.cinit` table.** Under `--rom_model` lnk6x composes the compressed load images, a
-    handler table of one pointer per decompressor, and a cinit table of `{load, run}` records,
-    and brackets the two with `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`.
-    q05-model-rom shows the shape at 0xC00002E8. This linker says on stderr that it composes
-    none of it and leaves the bounds empty, rather than writing a ram-model image quietly.
-  * **The allocation order with a library is not the SECTIONS order.** q07's addresses come out
-    `.stack`, `.text`, `.sysmem`, `.const`, `.c6xabi.extab`, `.fardata`, `.switch`, `.cinit`,
-    `.c6xabi.exidx` - the first four in descending size, the rest not - where flat.cmd names
-    them `.text`, `.const`, ..., `.stack`, `.sysmem`. What decides it is unread.
-  * **The input sections inside `.text` are not in input order either.** q07's are in
-    descending size for the whole of the run. One image says so.
+  * ~~No `.cinit` table~~ - **composed since 2026-09-22**, and the notes below are what it
+    was built from. What is still not identical to lnk6x's is the *order of contributions
+    inside* an output section, which is the layout difference listed further down: q18's
+    `.fardata` comes out with its words in a different order, so its compressed image
+    differs even though it decodes to the right 32 bytes. q05, whose `.data` is one word,
+    is byte-identical but for the two handler addresses, which move with the layout.
+    Under `--rom_model` lnk6x composes the load images, a handler table of one pointer per
+    decompressor, and a cinit table of `{load, run}` records, and brackets the two with
+    `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`. This linker says on stderr
+    that it composes none of it, rather than writing a ram-model image quietly.
+
+    **The layout, off q05-model-rom and q18-cinit.** `.cinit` holds, in order: every load
+    image; then the handler table, 4-aligned, one 32-bit pointer per decompressor, which
+    `__TI_Handler_Table_Base/Limit` bracket; then padding; then the records, 8-aligned, two
+    words each `{load, run}`, which `__TI_CINIT_Base/Limit` bracket. The initialised section
+    itself becomes SHT_NOBITS at its run address - q05's `.data` is type 8 in the image - so
+    its bytes live only in `.cinit`. The first byte of a load image is the handler's index
+    into that table. Both samples list two handlers, `__TI_decompress_rle24` at 0 and
+    `__TI_decompress_none` at 1, and both choose rle24 even for four bytes.
+
+    **What `__TI_decompress_none` expects**, read from its own instructions in q05.out
+    (`dis6x`, at 0xC0000280) rather than guessed:
+
+        ADD 3,A4,A3 ; LDW *+A3[0],A6 ; ADD 7,A4,B5 ; MV B4,A4 ; MV B5,B4 ; B memcpy
+
+    that is `memcpy(run, load + 7, *(u32 *)(load + 3))`. So an uncompressed image is one
+    index byte, two of padding, a 32-bit length, then the bytes - and its load address must
+    be **1 modulo 4**, or the length word is unaligned. That is a whole format, and it is
+    enough to compose a correct table without implementing TI's compressor; what it will not
+    give is an image byte-identical to lnk6x's, which chooses rle24.
+
+    **And rle24's stream, read the same way** (`__TI_decompress_rle_core` at 0xC0000000).
+    `__TI_decompress_rle24` tail-calls it with 1 in A6. The core takes the first byte of the
+    stream as an **escape value** E, then reads bytes: one that is not E is stored literally
+    and it goes round again; one that is E introduces a run - the next byte is the count,
+    the one after it the value, and it calls `memset` and advances. A count of zero is the
+    long form: two or three further bytes are shifted and or-ed into a wider length (A6 is
+    what makes it 24-bit rather than 16), and a count below four means the run is of E
+    itself, so an escape can be emitted without one. dst advances by the count each time.
+
+    **The caller convention, from `_auto_init_elf` in q18.out (0xC0006200).** It takes the
+    record count as `(__TI_CINIT_Limit - __TI_CINIT_Base) / 8`, walks the records two words
+    at a time, and then:
+
+        LDB *+A4[0],A3 ; ADD A4,1,A4 ; LDW *+A11[A3],A3 ; B A3
+
+    - the index is `load[0]`, and **the handler is called with `load + 1`**. So `none` finds
+    its length at `load + 4` and its bytes at `load + 8`, and an rle stream's escape byte is
+    `load[1]`.
+
+    **With that, both oracle images decode exactly**, which is the check that the reading is
+    right: q05's `00 00 44 33 22 11 ...` is handler 0, escape 0x00, four literals
+    `44 33 22 11` - its `.data` word - then escape+0 to end; q18's is handler 0, escape 0x40,
+    a run of 64 x 0x5A, 64 literals, then escape+0. A count of zero is the terminator, not a
+    long form; the long form is reached another way and neither sample needs it.
+
+    **And lnk6x's escape byte is the smallest value absent from the section's data** - 0x00
+    for q05, whose bytes are 44 33 22 11, and 0x40 for q18, whose bytes are 0x5A and 0x00
+    through 0x3F. Both samples agree, which makes byte-identity reachable after all: what is
+    left to settle is when it emits a run rather than literals (q18 runs 64 identical bytes
+    and leaves 64 varied ones alone), and whether it ever chooses `none` - q05 says it does
+    not, even for four bytes.
+  * ~~The allocation order with a library is not the SECTIONS order~~ - **read and
+    implemented 2026-09-22.** It is **descending size**, with `.bss` first (q03:
+    `__TI_STATIC_BASE` points at it), `.cinit` and `.c6xabi.exidx` held to the end whatever
+    their size, and a section the file never names after all of those (q12's `.mybss`). A
+    tie goes to the name, ascending: q19 has `.const` and `.text` both 0x40 and lnk6x puts
+    `.const` first - and it cannot be the file's order, because q19 is linked twice from
+    command files that name the six sections differently and lnk6x lays them out
+    identically both times. Why those two are held back is not read, but both describe the
+    rest of the image - the load images carry run addresses, the index is sorted by
+    function address - so placing them among the others would decide their contents from
+    their own position. q19 went from 926 and 114 bytes differing to **5**.
+  * ~~The input sections inside `.text` are not in input order~~ - **they are placed in
+    descending size since 2026-09-22**, which q07's map shows for the whole of its run
+    (0x640, 0x580, 0x4C0, 0x440, ...) and which applies to every output section, not just
+    `.text`. **A tie goes to the section's own name, ascending, with a bare `.text` after
+    every `.text:something`** - and the same for `.fardata`. That was measured rather than
+    assumed: over 511 ties in four reference maps, the archive's own order agrees with
+    lnk6x 46% of the time (chance) and the module summary's no better, while this rule is
+    **257 of 257** on every tie outside `.c6xabi.exidx`. The exidx is excluded because
+    lnk6x sorts it by function address instead, which is the entry below this one.
   * **`.c6xabi.exidx` is not sorted.** lnk6x sorts the index by function address and brackets
     it with `__TI_UNWIND_TABLE_START/END`, which this linker defines but does not sort behind.
   * **The attributes blob is still a constant** - see above - and q07's is the merge of five
@@ -91,7 +179,7 @@ they compound, so the three are not useful as regression tests until the first f
 
 Each is a refusal, not a silent wrong answer: the linker says so and stops.
 
-  * PREL31, EHTYPE, PCR_L16 and PCR_H16 - see above.
+  * PREL31 and EHTYPE - see above. PCR_L16 and PCR_H16 are applied now.
   * `START`, `END`, `SIZE`, `LOAD_START` and the other address operators, `GROUP`, `UNION`,
     `PAGE`, `type = COPY|DSECT|NOLOAD`, and expression assignments in a `SECTIONS` entry. The
     input-section list and subsection form are read now; the rest are not.
