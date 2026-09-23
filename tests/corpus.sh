@@ -1,6 +1,6 @@
 #!/bin/sh
 # The ratification corpus: every program under tests/corpus, taken through the two chains and
-# compared. The Mac compiles (cc1i, cxx1i, shci write the C6000 assembly here, since they are
+# compared. The Mac compiles (c90, cpp11, shalimar write the C6000 assembly here, since they are
 # Mac binaries; a Shalimar program brings the runtime's six .s from RIDE's lib/shmrt-tms6747
 # with it); the Windows box assembles each module twice - CCS 7.4's cl6x, and this project's
 # asm6x - and links each set twice - TI's lnk6x on RIDE's exact line and command file, and this
@@ -15,12 +15,12 @@
 #   sh tests/corpus.sh report       report from what build/corpus already holds
 #
 # Each tests/corpus/NN-name/manifest names its modules in link order; the extension says which
-# compiler: .c cc1i, .cpp cxx1i, .shl/.shm shci (the first only - shci compiles the files beside
+# compiler: .c c90, .cpp cpp11, .shl/.shm shalimar (the first only - shalimar compiles the files beside
 # it into the same assembly), .s as written.
 set -u
 cd "$(dirname "$0")/.." || exit 1
 BIN=$(cd "${BIN:-../RIDE/bin}" && pwd)
-CC1I=${CC1I:-$BIN/cc1i.exe}; CXX1I=${CXX1I:-$BIN/cxx1i.exe}; SHCI=${SHCI:-$BIN/shci.exe}
+CC1I=${CC1I:-$BIN/c90.exe}; CXX1I=${CXX1I:-$BIN/cpp11.exe}; SHCI=${SHCI:-$BIN/shalimar.exe}
 SHMRT=${SHMRT:-$BIN/lib/shmrt-tms6747}
 BOX=${BOX:-windows}
 ROOT=${ROOT:-C:/lnk6x-probes/corpus}
