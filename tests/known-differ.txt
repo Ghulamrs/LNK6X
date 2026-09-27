@@ -1,0 +1,9 @@
+; Probes the bed lets differ, by at most the bytes given - each difference is in docs/known.md.
+; run.sh fails a probe that differs by more, and one listed here that matches: take it off then.
+q05-model-rom   2876   ; the .cinit table's layout and compression
+q07-lib        18397   ; .cinit, the unsorted .c6xabi.exidx and the attributes blob
+q15-far          906   ; no trampolines
+q16-ride        3023   ; .cinit and the runtime's layout, as q07
+q17-pcr-here   18397   ; R_C6000_PCR_L16/H16 not settled, and q07's
+q17-pcr-moved  18423   ; as q17-pcr-here, linked 0x1234000 higher
+q18-cinit      18524   ; the .cinit table's layout and compression
