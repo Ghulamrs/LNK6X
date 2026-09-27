@@ -16,7 +16,7 @@ COPYFILE_DISABLE=1 tar -C . --no-xattrs -czf "$T/tree.tgz" tests || exit 1
 W=$(echo "$ROOT" | sed 's|/|\\|g')        # the same place in cmd's spelling
 ssh -n -o BatchMode=yes "$BOX" "if not exist $W mkdir $W" > /dev/null || exit 1
 scp -q "$T/tree.tgz" "$BOX:$ROOT/tree.tgz" || exit 1
-ssh -n -o BatchMode=yes "$BOX" "cd /d $W & tar xzf tree.tgz & $W\\tests\\windows\\probe.cmd $W"
+ssh -n -o BatchMode=yes "$BOX" "cd /d $W & (if exist tests rmdir /s /q tests) & tar xzf tree.tgz & $W\\tests\\windows\\probe.cmd $W"
 rc=$?
 scp -q "$BOX:$ROOT/build/probe/*" "$T/" || exit 1
 [ $rc = 0 ] || echo "probes.sh: the box reported a failure - read the .asm and .lnk logs"

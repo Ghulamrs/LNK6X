@@ -5,6 +5,7 @@ rem  what each one turned out to be. Nothing of this project's own is built or t
 rem  point is to write down what TI's tools do, for the Mac side to read.
 rem  Usage: probe.cmd <tree root>    -> <root>\build\probe
 setlocal enabledelayedexpansion
+if "%~1"==":shard" goto :shard
 if "%~1"=="" (echo probe.cmd: needs the tree root & exit /b 2)
 rem  CCS 7.4 on the box: the C6000 code generation tools, and the runtime built as
 rem  VM6747/Emulator/tests/ti.sh says. Override either by setting it before calling.
@@ -20,26 +21,11 @@ set CMDS=..\..\tests\cmd
 set MV=-mv6740 --abi=eabi
 set fail=0
 
-rem  assemble: the linker's input, as TI's own assembler writes it
-for %%f in (%PROBES%\*.s) do (
-    cl6x %MV% --no_compress --symdebug:none -c %%f --output_file=%%~nf.obj > %%~nf.asm 2>&1 || (echo ASM-FAILED %%~nf & set fail=1)
-    if exist %%~nf.obj (
-        ofd6x -x -o=%%~nf.obj.xml %%~nf.obj > nul 2>&1
-        dis6x %%~nf.obj > %%~nf.obj.dis 2>&1
-    )
-)
-
-rem  link: each line of links.txt is name | command file | extra flags | objects
-for /f "usebackq tokens=1,2,3,* delims=|" %%a in ("%PROBES%\links.txt") do (
-    set objs=
-    for %%o in (%%d) do set objs=!objs! %%o.obj
-    lnk6x %MV% -i %TILIB% %CMDS%\%%b !objs! %%c -o %%a.out -m %%a.map > %%a.lnk 2>&1 || (echo LINK-FAILED %%a & set fail=1)
-    if exist %%a.out (
-        ofd6x -x -o=%%a.out.xml %%a.out > nul 2>&1
-        dis6x %%a.out > %%a.out.dis 2>&1
-        nm6x %%a.out > %%a.out.nm 2>&1
-    )
-)
+rem  Assembling and linking are each sharded across the box with par.cmd, the links after the
+rem  objects they read; a shard prints *-FAILED and the parent reads its log for one.
+call "%~dp0par.cmd" 6 "%~f0" asm > stage.log & type stage.log & findstr /C:"-FAILED" stage.log >nul && set fail=1
+call "%~dp0par.cmd" 6 "%~f0" links > stage.log & type stage.log & findstr /C:"-FAILED" stage.log >nul && set fail=1
+del /q stage.log
 
 rem  q10: an archive of exactly two members, one of them never referenced. TI's own runtime
 rem  answers this too (q07), but not in isolation and not with a marker to look for.
@@ -62,3 +48,43 @@ cl6x --compiler_revision > versions.txt 2>&1
 lnk6x --help 2>&1 | findstr /C:"Version" >> versions.txt
 if %fail%==1 (echo PROBE-FAILED & exit /b 1)
 echo PROBE-DONE
+
+exit /b 0
+
+rem  One shard of one stage: every Nth item, from build\probe, the parent's variables inherited.
+:shard
+set K=%~2
+set N=%~3
+set /a I=0
+goto :%~4
+
+rem  assemble: the linker's input, as TI's own assembler writes it
+:asm
+for %%f in (%PROBES%\*.s) do (
+    set /a I+=1, M=I %% N + 1
+    if !M!==!K! (
+        cl6x %MV% --no_compress --symdebug:none -c %%f --output_file=%%~nf.obj > %%~nf.asm 2>&1 || echo ASM-FAILED %%~nf
+        if exist %%~nf.obj (
+            ofd6x -x -o=%%~nf.obj.xml %%~nf.obj > nul 2>&1
+            dis6x %%~nf.obj > %%~nf.obj.dis 2>&1
+        )
+    )
+)
+exit /b 0
+
+rem  link: each line of links.txt is name | command file | extra flags | objects
+:links
+for /f "usebackq tokens=1,2,3,* delims=|" %%a in ("%PROBES%\links.txt") do (
+    set /a I+=1, M=I %% N + 1
+    if !M!==!K! (
+        set objs=
+        for %%o in (%%d) do set objs=!objs! %%o.obj
+        lnk6x %MV% -i %TILIB% %CMDS%\%%b !objs! %%c -o %%a.out -m %%a.map > %%a.lnk 2>&1 || echo LINK-FAILED %%a
+        if exist %%a.out (
+            ofd6x -x -o=%%a.out.xml %%a.out > nul 2>&1
+            dis6x %%a.out > %%a.out.dis 2>&1
+            nm6x %%a.out > %%a.out.nm 2>&1
+        )
+    )
+)
+exit /b 0
