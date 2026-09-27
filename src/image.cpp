@@ -68,10 +68,27 @@ bool Link::write_image()
     }
     std::stable_sort(placed.begin(), placed.end(), ByAddr(&outs));
 
+    /*  A segment starts at the largest alignment of the sections it will hold, not its first's:
+     *  q19's .neardata is aligned 1 and lnk6x puts it at 0x40, .text's 32. The groups are the
+     *  segments' own, by the rule the segment loop below applies. */
+    std::vector<u32> start_align(placed.size(), 0);
+    for (size_t k = 0, lead = 0, end = 0, flags = 0; k < placed.size(); k++) {
+        const OutSec &o = outs[placed[k]];
+        if (!o.size) continue;
+        u32 f = (u32)flags | o.pflags;
+        if (start_align[lead] && !((f & PF_W) && (f & PF_X)) && o.addr == end) {
+            if (o.align > start_align[lead]) start_align[lead] = o.align;
+            flags = f;
+        } else {
+            lead = k; start_align[k] = o.align ? o.align : 1; flags = o.pflags;
+        }
+        end = o.addr + o.size;
+    }
+
     u32 pos = 52;
     for (size_t k = 0; k < placed.size(); k++) {
         OutSec &o = outs[placed[k]];
-        pos = align_up(pos, o.align);
+        pos = align_up(pos, start_align[k] > o.align ? start_align[k] : o.align);
         o.offset = pos;
         if (o.type == SHT_PROGBITS) pos += o.size;
     }

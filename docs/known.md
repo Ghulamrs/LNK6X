@@ -157,7 +157,9 @@ they compound, so the three are not useful as regression tests until the first f
     identically both times. Why those two are held back is not read, but both describe the
     rest of the image - the load images carry run addresses, the index is sorted by
     function address - so placing them among the others would decide their contents from
-    their own position. q19 went from 926 and 114 bytes differing to **5**.
+    their own position. q19 went from 926 and 114 bytes differing to **5**, and to none on 2026-09-27: a segment
+    starts at the largest alignment of the sections it holds, so its .neardata, aligned 1,
+    sits at 0x40 because the .text behind it is aligned 32.
   * ~~The input sections inside `.text` are not in input order~~ - **they are placed in
     descending size since 2026-09-22**, which q07's map shows for the whole of its run
     (0x640, 0x580, 0x4C0, 0x440, ...) and which applies to every output section, not just
