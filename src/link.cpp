@@ -143,7 +143,7 @@ bool Link::read_inputs()
     /*  The command line's objects, in its order - that order is the layout order - and its
      *  archives kept aside. A `-l name` is looked for through the `-i` directories; a name
      *  given with a directory, or an object, is opened as it stands. */
-    std::vector<Archive> libs;
+    libs.clear();
     for (size_t i = 0; i < opt.inputs.size(); i++) {
         std::string path = opt.inputs[i];
         std::vector<u8> b;
@@ -181,6 +181,9 @@ bool Link::read_inputs()
          *  without asking for them here they are never pulled out of the runtime, and the
          *  table would point at nothing. */
         if (opt.rom_model) {
+            /*  Not __TI_zero_init: a pulled member's symbols reach the image even when its code
+             *  is eliminated, and lnk6x has none of that one's unless it is used - so it is
+             *  pulled by eliminate(), once a zero-fill record is known to need it. */
             static const char *const kHandlers[] = { "__TI_decompress_rle24",
                                                      "__TI_decompress_none", 0 };
             for (int h = 0; kHandlers[h]; h++)
@@ -377,13 +380,30 @@ void Link::set_linker_symbols()
         std::string sec = ".cinit";
         int end = 1;
         if (y.name == "__TI_STACK_END")                 sec = ".stack";
-        else if (y.name.compare(0, 18, "__TI_UNWIND_TABLE") == 0) sec = ".c6xabi.exidx";
+        else if (y.name.compare(0, 17, "__TI_UNWIND_TABLE") == 0) sec = ".c6xabi.exidx";
+        /*  **Only the .cinit table's own names default to .cinit.** The rest - binit and
+         *  __binit__ among them - keep the value add_linker_symbols gave them: 0xFFFFFFFF,
+         *  which _auto_init_elf reads as "no boot copy table". Moved to .cinit's end, it
+         *  called copy_in on whatever lay there, and hello never reached main. */
+        else if (y.name != "__TI_CINIT_Base" && y.name != "__TI_CINIT_Limit" &&
+                 y.name != "__TI_Handler_Table_Base" && y.name != "__TI_Handler_Table_Limit") continue;
         if (y.name == "__TI_UNWIND_TABLE_START" || y.name == "__TI_CINIT_Base" ||
             y.name == "__TI_Handler_Table_Base") end = 0;
         int oi = out_index(sec);
         if (oi < 0) continue;
         y.value = outs[oi].addr + (end ? outs[oi].size : 0);
         y.lnk_out = oi;
+        /*  **The .cinit table's names point inside it, and must before fix_up runs.** They
+         *  were given .cinit's start and end here and corrected only by place_cinit, after
+         *  relocation - so _auto_init_elf was patched with the start of .cinit for both
+         *  bases and read the compressed image as its record table. */
+        if (sec == ".cinit" && cinit_in >= 0) {
+            u32 base = all[cinit_in]->addr;
+            if (y.name == "__TI_Handler_Table_Base")       y.value = base + cinit_table_off;
+            else if (y.name == "__TI_Handler_Table_Limit") y.value = base + cinit_table_off + 4 * (u32)cinit_handlers.size();
+            else if (y.name == "__TI_CINIT_Base")          y.value = base + cinit_recs_off;
+            else if (y.name == "__TI_CINIT_Limit")         y.value = base + cinit_recs_off + 8 * (u32)cinit_recs.size();
+        }
     }
 }
 
@@ -394,7 +414,8 @@ bool Link::eliminate()
     std::map<std::string, std::pair<int, int> >::iterator e = defined.find(opt.entry);
     if (e == defined.end()) { err = "entry point not found: " + opt.entry; return false; }
 
-    std::vector<std::pair<int, int> > work;      /* module, section */
+    std::vector<std::pair<int, int> > &work = pending;   /* module, section */
+    work.clear();
     Module &em = mods[e->second.first];
     Sym &es = em.syms[e->second.second];
     if (es.shndx >= em.secs.size()) { err = opt.entry + ": defined in no section"; return false; }
@@ -417,8 +438,82 @@ bool Link::eliminate()
         }
     }
 
-    while (!work.empty()) {
-        std::pair<int, int> at = work.back(); work.pop_back();
+    /*  **An unwind index entry lives as long as the code it describes.** `.c6xabi.exidx`
+     *  is SHF_LINK_ORDER with sh_link naming its function's section; nothing refers to it,
+     *  so following references alone drops every one - and with them the personality
+     *  routine they name and the whole unwinder behind it, which is what lnk6x keeps. */
+    for (;;) {
+        while (!work.empty()) {
+            std::pair<int, int> at = work.back(); work.pop_back();
+            if (!follow(at)) return false;
+        }
+        for (size_t mi = 0; mi < mods.size(); mi++) {
+            std::vector<InSec> &ss = mods[mi].secs;
+            for (size_t si = 0; si < ss.size(); si++) {
+                InSec &x = ss[si];
+                if (x.live || x.dropped || x.name.compare(0, 13, ".c6xabi.exidx") != 0) continue;
+                if (x.link == 0 || x.link >= ss.size() || !ss[x.link].live) continue;
+                x.live = true;
+                work.push_back(std::make_pair((int)mi, (int)si));
+            }
+        }
+        if (work.empty()) {
+            /*  **__TI_zero_init is a root only when something will be zero-filled**: a live,
+             *  uninitialised .bss or .far piece under --rom_model. hello's .far is one and lnk6x
+             *  links the handler; q07 has none and lnk6x leaves it out. */
+            if (opt.rom_model && !zero_root) {
+                bool need = false;
+                for (size_t mi = 0; mi < mods.size() && !need; mi++)
+                    for (size_t si = 0; si < mods[mi].secs.size() && !need; si++) {
+                        const InSec &x = mods[mi].secs[si];
+                        if (x.live && x.type == SHT_NOBITS && x.size && (x.flags & SHF_WRITE) &&
+                            (base_section(x.name) == ".far" || base_section(x.name) == ".bss")) need = true;
+                    }
+                if (need && defined.find("__TI_zero_init") == defined.end() && !pull_symbol("__TI_zero_init"))
+                    return false;
+                std::map<std::string, std::pair<int, int> >::iterator d = defined.find("__TI_zero_init");
+                if (need && d != defined.end()) {
+                    zero_root = true;
+                    Module &hm = mods[d->second.first];
+                    u16 hx = hm.syms[d->second.second].shndx;
+                    if (hx && hx < hm.secs.size() && !hm.secs[hx].live) {
+                        hm.secs[hx].live = true;
+                        work.push_back(std::make_pair(d->second.first, (int)hx));
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    return true;
+}
+
+/*  The archive member that defines one name, taken as read_inputs takes members - for the
+ *  one handler that is only wanted once elimination has seen what it would zero. */
+bool Link::pull_symbol(const std::string &name)
+{
+    for (size_t a = 0; a < libs.size(); a++) {
+        Archive &ar = libs[a];
+        for (size_t k = 0; k < ar.index.size(); k++) {
+            if (ar.index[k].first != name) continue;
+            u32 off = ar.index[k].second;
+            if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) return true;
+            Module m;
+            if (!ar.member(off, m, err)) return false;
+            ar.taken.push_back(off);
+            mods.push_back(m);
+            return take_module((int)mods.size() - 1);
+        }
+    }
+    return true;
+}
+
+/*  One kept section's references, each target made live and queued. */
+bool Link::follow(std::pair<int, int> at)
+{
+    std::vector<std::pair<int, int> > &work = pending;
+    {
         InSec &c = mods[at.first].secs[at.second];
         for (size_t r = 0; r < c.relocs.size(); r++) {
             const Rel &rl = c.relocs[r];
@@ -529,7 +624,10 @@ bool Link::build_sections()
         for (size_t k = 0; k < o.parts.size(); k++) {
             InSec *c = all[o.parts[k]];
             if (c->align > o.align) o.align = c->align;
-            if (c->type == SHT_PROGBITS) o.progbits = true;
+            /*  Bytes are anything not NOBITS: .c6xabi.exidx is SHT_C6000_UNWIND in every
+             *  object and PROGBITS in lnk6x's image - written NOBITS, the index was never
+             *  loaded and the unwinder had nothing to search. */
+            if (c->type != SHT_NOBITS) o.progbits = true;
             /*  The flags of a section that has input come from that input, not from the table
              *  above: the table was read off *empty* sections, where lnk6x writes 0 for
              *  .const, .switch, .cio, .stack and .sysmem, and q13 shows all three of .const,
@@ -609,6 +707,11 @@ bool Link::allocate()
             outs[oi].reserve = (n == "__TI_SYSMEM_SIZE") ? cmd.heap_size : cmd.stack_size;
         }
     }
+    /*  **The heap is sized when the allocator is linked**, whoever names what: TI's
+     *  memory.obj brings an input .sysmem of its own and never asks for __TI_SYSMEM_SIZE,
+     *  and lnk6x makes the section --heap_size all the same (q07: 0x1000). */
+    int hs = out_index(".sysmem");
+    if (hs >= 0 && !outs[hs].parts.empty() && outs[hs].reserve == 0) outs[hs].reserve = cmd.heap_size;
 
     /*  **The order output sections are allocated in is descending size**, not the order
      *  the command file names them. q07's run is .stack 0x4000, .text 0x3FC0, .sysmem
@@ -697,13 +800,35 @@ bool Link::allocate()
          *  BiggerPart, which is where the reading of it is written down. */
         std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
         o.addr = at;
+        /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
+         *  fills its holes. q07's .const puts two 4-byte strings at 0x905c and 0x9084, in
+         *  front of 8-aligned typeinfo names, where appending left them at the end and made
+         *  the section 8 bytes longer than the oracle's. Gaps are tried lowest first. */
+        std::vector<std::pair<u32, u32> > holes;        /* [start, end) */
         for (size_t p = 0; p < o.parts.size(); p++) {
             InSec *c = all[o.parts[p]];
-            at = align_up(at, c->align);
-            c->addr = at;
-            c->load = at;
-            at += c->size;
+            bool placed = false;
+            for (size_t h = 0; h < holes.size() && !placed; h++) {
+                u32 s = align_up(holes[h].first, c->align);
+                if (s + c->size > holes[h].second) continue;
+                std::pair<u32, u32> was = holes[h];
+                holes.erase(holes.begin() + (long)h);
+                if (s + c->size < was.second) holes.insert(holes.begin() + (long)h, std::make_pair(s + c->size, was.second));
+                if (was.first < s) holes.insert(holes.begin() + (long)h, std::make_pair(was.first, s));
+                c->addr = s;
+                placed = true;
+            }
+            if (!placed) {
+                u32 s = align_up(at, c->align);
+                if (s > at) holes.push_back(std::make_pair(at, s));
+                c->addr = s;
+                at = s + c->size;
+            }
+            c->load = c->addr;
         }
+        /*  A reservation is a floor, not an addition: .sysmem holds memory.obj's own 8 bytes
+         *  and is still exactly --heap_size in q07's reference image. */
+        if (at - o.addr < o.reserve) at = o.addr + o.reserve;
         o.size = at - o.addr;
         if (at - r->origin > r->length) { err = o.name + ": does not fit in " + o.run; return false; }
         r->used = at - r->origin;
@@ -825,6 +950,19 @@ bool Link::compose_cinit()
     cinit_handlers.clear();
     std::vector<u8> image;
 
+    /*  **Uninitialised .bss and .far are zeroed by a record of their own** when the zero
+     *  handler was linked: hello's table is `.fardata` rle, then `.far` zero_init, and its
+     *  handler table puts __TI_zero_init at index 0 - which moves rle24 to 1. .cio, also
+     *  uninitialised, gets none. */
+    std::vector<int> zero_outs;
+    if (zero_root)
+        for (size_t oi = 0; oi < outs.size(); oi++) {
+            const OutSec &o = outs[oi];
+            if ((o.flags & SHF_ALLOC) && (o.flags & SHF_WRITE) && o.type == SHT_NOBITS && o.size &&
+                (o.name == ".far" || o.name == ".bss")) zero_outs.push_back((int)oi);
+        }
+    const u8 rle_index = zero_outs.empty() ? 0 : 1;
+
     for (size_t oi = 0; oi < outs.size(); oi++) {
         OutSec &o = outs[oi];
         if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
@@ -847,16 +985,18 @@ bool Link::compose_cinit()
         r.out = (int)oi;
         cinit_recs.push_back(r);
 
-        image.push_back(0);                       /* the handler index, rle24 */
+        image.push_back(rle_index);               /* the handler index, rle24 */
         rle24_encode(d, escape_for(d), image);
 
         o.type = SHT_NOBITS;                      /* its bytes live in .cinit now */
         o.progbits = false;
     }
-    if (cinit_recs.empty()) return true;
+    if (cinit_recs.empty() && zero_outs.empty()) return true;
 
     /*  Both samples list the two the runtime has, rle24 first, whether or not `none` is
-     *  used - so the index of rle24 is 0 and the table is two words. */
+     *  used - so the index of rle24 is 0 and the table is two words; __TI_zero_init goes in
+     *  front of them when a zero-fill record needs it. */
+    if (!zero_outs.empty()) cinit_handlers.push_back("__TI_zero_init");
     cinit_handlers.push_back("__TI_decompress_rle24");
     cinit_handlers.push_back("__TI_decompress_none");
 
@@ -866,6 +1006,18 @@ bool Link::compose_cinit()
     while (image.size() % 4) image.push_back(0);
     cinit_table_off = (u32)image.size();
     image.resize(image.size() + 4 * cinit_handlers.size(), 0);
+    /*  The zero-fill records follow the handler table: the handler index, three bytes of
+     *  padding, and the section's size - hello's `.far` is 00 00 00 00 48 01 00 00. */
+    for (size_t z = 0; z < zero_outs.size(); z++) {
+        while (image.size() % 4) image.push_back(0);
+        CinitRec r;
+        r.image = (u32)image.size();
+        r.out = zero_outs[z];
+        cinit_recs.push_back(r);
+        u32 sz = outs[zero_outs[z]].size;
+        image.push_back(0); image.push_back(0); image.push_back(0); image.push_back(0);
+        image.push_back((u8)sz); image.push_back((u8)(sz >> 8)); image.push_back((u8)(sz >> 16)); image.push_back((u8)(sz >> 24));
+    }
     while (image.size() % 8) image.push_back(0);
     cinit_recs_off = (u32)image.size();
     image.resize(image.size() + 8 * cinit_recs.size(), 0);

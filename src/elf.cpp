@@ -38,6 +38,7 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
         c.size    = rd32(s + 20);
         c.align   = rd32(s + 32);
         c.entsize = rd32(s + 36);
+        c.link    = rd32(s + 24);
         c.module  = -1;
         c.index   = i;
         c.live    = false;
@@ -92,6 +93,15 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
             r.sym    = ri >> 8;
             r.type   = ri & 0xFF;
             r.addend = (type == SHT_RELA) ? (i32)rd32(rp + 8) : 0;
+            /*  **A REL relocation keeps its addend in the place it patches**, and TI's runtime
+             *  is REL for its data words: a type_info's vptr is `vtable + 8`, and an unwind
+             *  table's PREL31 field holds its offset. Read here, from the object's own bytes,
+             *  because fix_up runs twice under --rom_model and would read its own result. */
+            if (type == SHT_REL && r.offset + 4 <= t.data.size()) {
+                u32 w = rd32(&t.data[r.offset]);
+                if (r.type == R_C6000_ABS32 || r.type == R_C6000_EHTYPE) r.addend = (i32)w;
+                else if (r.type == R_C6000_PREL31) r.addend = (i32)(w << 1);   /* halfwords: x2 */
+            }
             t.relocs.push_back(r);
         }
     }

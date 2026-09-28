@@ -95,6 +95,7 @@ struct Sym {
 struct InSec {
     std::string name;
     u32 type, flags, size, align, entsize;
+    u32 link = 0;                /* sh_link: for .c6xabi.exidx, the code section it describes */
     std::vector<u8> data;        /* empty when SHT_NOBITS */
     std::vector<Rel> relocs;
     int  module;
@@ -153,7 +154,8 @@ struct Cmd {
      *  nothing, 1 = --ram_model, 2 = --rom_model. */
     int model;
     std::string entry;
-    Cmd() : stack_size(0), heap_size(0), model(0) {}
+    /*  lnk6x's own defaults, 1 kB each, where neither the line nor the file names a size. */
+    Cmd() : stack_size(0x400), heap_size(0x400), model(0) {}
     bool parse(const std::string &path, std::string &err);
     Range *range(const std::string &name);
 };
@@ -180,8 +182,21 @@ struct Options {
     std::vector<std::string> libdirs;
     bool ram_model, rom_model, verbose;
     bool model_given, entry_given;       /* whether the command line said so itself */
+    long stack_size, heap_size;          /* -1 unless the command line gave one */
     Options() : entry("_c_int00"), ram_model(true), rom_model(false), verbose(false),
-                model_given(false), entry_given(false) {}
+                model_given(false), entry_given(false), stack_size(-1), heap_size(-1) {}
+};
+
+/* archive.cpp */
+struct Archive {
+    std::string name;
+    std::vector<u8> bytes;
+    std::vector<std::pair<std::string, u32> > index;   /* symbol -> the member's offset */
+    std::vector<u32> taken;                            /* members already pulled */
+    size_t longnames_at;                               /* the `//` member's data, 0 when none */
+    Archive() : longnames_at(0) {}
+    bool load(const std::string &path, std::string &err);
+    bool member(u32 off, Module &m, std::string &err) const;
 };
 
 struct Link {
@@ -206,7 +221,13 @@ struct Link {
     bool in_image(int mi, int sym) const;
     void add_linker_symbols();
     void set_linker_symbols();
+    void write_map();
+    std::vector<Archive> libs;                   /* the archives read_inputs opened */
+    bool pull_symbol(const std::string &name);
     bool eliminate();
+    bool follow(std::pair<int, int> at);
+    std::vector<std::pair<int, int> > pending;   /* elimination's work list: module, section */
+    
     bool build_sections();
     /*  --rom_model: the load images and the table that drives them. compose_cinit runs
      *  before allocation, because .cinit's size decides where everything after it goes;
@@ -219,6 +240,7 @@ struct Link {
     std::vector<CinitRec> cinit_recs;
     std::vector<std::string> cinit_handlers;
     u32 cinit_table_off, cinit_recs_off;
+    bool zero_root = false;      /* __TI_zero_init was made a root: a .bss or .far needs zeroing */
     int cinit_in;                     /* index into `all` of the synthetic contribution */
     bool allocate();
     bool fix_up();
@@ -230,17 +252,7 @@ struct Link {
 /* elf.cpp */
 bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::string &err);
 
-/* archive.cpp */
-struct Archive {
-    std::string name;
-    std::vector<u8> bytes;
-    std::vector<std::pair<std::string, u32> > index;   /* symbol -> the member's offset */
-    std::vector<u32> taken;                            /* members already pulled */
-    size_t longnames_at;                               /* the `//` member's data, 0 when none */
-    Archive() : longnames_at(0) {}
-    bool load(const std::string &path, std::string &err);
-    bool member(u32 off, Module &m, std::string &err) const;
-};
+
 
 /* where a `-l name` is looked for: as given, then each `-i` directory in order */
 std::string find_library(const Options &o, const std::string &nm);

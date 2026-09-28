@@ -49,13 +49,21 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
         field(p, (S - (((P & ~0x1Fu) - (u32)A) & ~0x1Fu)) & 0xFFFFu, 7, 16); break;
     case R_C6000_PCR_H16:
         field(p, ((S - (((P & ~0x1Fu) - (u32)A) & ~0x1Fu)) >> 16) & 0xFFFFu, 7, 16); break;
+    /*  **PREL31, the unwind tables' own, counts halfwords on the C6000**: a 31-bit offset
+     *  from the word to its target, shifted right one where ARM's is in bytes, the word's
+     *  top bit kept - it is a flag, not a digit. Read off q07's .c6xabi.exidx: 0x7fffd678
+     *  at 0xc0009310 is process_unwind at 0xc0004000 only as (S - P) / 2. */
+    case R_C6000_PREL31: {
+        u32 w = rd32(p);
+        wr32(p, (w & 0x80000000u) | (((u32)((i32)(V - P) >> 1)) & 0x7FFFFFFFu));
+        break;
+    }
     default: {
         /*  Name it. `relocation type 30 is not handled` sent a reader to the ABI to find out
          *  which one that was; these four are the ones the runtime and the C++ unwind tables
          *  bring, and what each computes is still unread (docs/known.md). */
         const char *nm = 0;
         switch (type) {
-        case R_C6000_PREL31:  nm = "PREL31";  break;
         case R_C6000_EHTYPE:  nm = "EHTYPE";  break;
 
         default: break;

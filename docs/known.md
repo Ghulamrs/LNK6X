@@ -194,6 +194,42 @@ Each is a refusal, not a silent wrong answer: the linker says so and stops.
   * No `.map` file is written. `-m` is accepted and ignored - and the oracle's map is the
     readable evidence this whole bed is built on, so this is the next thing worth having.
 
+## A real program against TI's runtime, 2026-09-28
+
+Measured from C++Optimize (`tools/c6747-three`): cpp11's `hello` object, assembled by ASM6x and
+linked against `rts6740_elf_eh.lib` (7.4.4's mklib) with TI's own `C6747.cmd`. **It runs now**
+on TI's C6747 cycle-accurate simulator - `Hello World!`, 26,242 cycles, where lnk6x's image of
+the same object takes 26,122 - and q07's image went from 9 sections matching the oracle's to 15
+of 16. What it took, each read off the oracle's map or bytes:
+
+  * **The command file and the line.** A MEMORY entry needs no colon and may carry
+    `(RWX)`; `-heap`/`-stack` in the file, `--heap_size`/`--stack_size` on the line, and
+    lnk6x's 1 kB defaults.
+  * **An unwind index entry lives while its code does** (`sh_link` names it) - which is what
+    pulls the personality routine and the unwinder in; q07's .text went 3,488 -> 16,320 bytes.
+  * **PREL31 counts halfwords on the C6000**: `(S + A - P) >> 1`, where ARM's is bytes.
+  * **REL relocations keep their addend in the place**: a type_info's vptr is `vtable + 8`.
+    Read at load, because fix_up runs twice under --rom_model.
+  * **.sysmem is --heap_size whenever memory.obj brings one**, the reservation a floor.
+  * **Holes are filled first-fit** within an output section, lowest gap first.
+  * **`__TI_UNWIND_TABLE_START/END`** were compared against 18 characters of a 17-character
+    prefix and so pointed at .cinit.
+  * **A segment is a run of one kind** - file bytes or none - never mixing write and execute,
+    and .c6xabi.exidx (SHT_C6000_UNWIND) is file bytes, PROGBITS in the output: zero-filled
+    before, it took .switch and .cinit with it and _c_int00 ran off a blank table.
+  * **Zero-fill records**: an uninitialised `.far`/`.bss` gets `__TI_zero_init` at handler
+    index 0 (rle24 moves to 1) and an 8-byte record, the handler pulled only when needed - a
+    pulled member's symbols reach the image even when its code is eliminated.
+  * **`binit`/`__binit__` stay 0xFFFFFFFF**, and the four `.cinit` table names are set before
+    fix_up, not after it: `_auto_init_elf` had been patched with .cinit's start for both bases.
+
+**Still different from lnk6x, and why q07 is 15 of 16:** the index has no linker-made
+entries - lnk6x adds an EXIDX_CANTUNWIND for kept code with no entry of its own and merges
+adjacent ones (42 entries against 37 here). It changes nothing for a program that does not
+throw through such code. `tests/known-differ.txt` still holds the old byte counts for the
+library probes; they moved because the images are now laid out as the oracle's and differ in
+the index and the symbol table, not because they got further away.
+
 ## Things that are this linker's own
 
 Nothing. There is no equivalent here of LINK's `/timestamp:`, because a TI image carries no

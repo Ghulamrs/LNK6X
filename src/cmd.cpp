@@ -115,6 +115,16 @@ bool Cmd::parse(const std::string &path, std::string &err)
         std::string t = lx.next();
         if (t.empty()) break;
 
+        /*  The single-dash spellings, which TI's own command files use: `-heap 0x1000`,
+         *  `-stack 0x800`, `-e sym`, and `-c`/`-cr` for the model. */
+        if (t == "-heap" || t == "-stack") {
+            u32 v = number(lx.next());
+            if (t == "-heap") heap_size = v; else stack_size = v;
+            continue;
+        }
+        if (t == "-e") { entry = lx.next(); continue; }
+        if (t == "-c") { model = 2; continue; }
+        if (t == "-cr") { model = 1; continue; }
         if (t.size() > 2 && t[0] == '-' && t[1] == '-') {
             size_t eq = t.find('=');
             std::string k = (eq == std::string::npos) ? t : t.substr(0, eq);
@@ -141,7 +151,10 @@ bool Cmd::parse(const std::string &path, std::string &err)
                  *  names the wrong thing entirely (the review's N17). */
                 if (name.empty()) break;
                 Range r; r.name = name; r.origin = r.length = r.used = 0;
-                if (lx.next() != ":") { err = path + ": " + name + ": expected a colon"; return false; }
+                /*  `NAME (RWX) : origin = ...`. The attributes and the colon are both optional
+                 *  to lnk6x: TI's own C6747.cmd writes `DSPL2ROM o = 0x00700000 l = ...`. */
+                if (lx.peek() == "(") { while (!lx.peek().empty() && lx.next() != ")") {} }
+                if (lx.peek() == ":") lx.next();
                 for (;;) {
                     std::string k = lx.peek();
                     if (k == "origin" || k == "o" || k == "ORIGIN" || k == "O") {

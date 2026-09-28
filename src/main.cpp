@@ -6,6 +6,7 @@
  */
 #include "lnk.h"
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 bool Link::run()
@@ -19,6 +20,8 @@ bool Link::run()
         opt.ram_model = !opt.rom_model;
     }
     if (!opt.entry_given && !cmd.entry.empty()) opt.entry = cmd.entry;
+    if (opt.stack_size >= 0) cmd.stack_size = (u32)opt.stack_size;
+    if (opt.heap_size >= 0)  cmd.heap_size  = (u32)opt.heap_size;
     if (!read_inputs())    return false;
     if (!eliminate())      return false;
     if (!build_sections()) return false;
@@ -38,7 +41,30 @@ bool Link::run()
             place_cinit();
         }
     }
+    if (!opt.map.empty()) write_map();
     return write_image();
+}
+
+/*  A map in lnk6x's layout, as far as the sections go: each output section, then each input
+ *  piece with its run address, size, module and section name. Enough to diff against the
+ *  oracle's map line by line - which is how the differences below were found. */
+void Link::write_map()
+{
+    FILE *f = fopen(opt.map.c_str(), "w");
+    if (!f) return;
+    fprintf(f, "SECTION ALLOCATION MAP\n\n");
+    for (size_t i = 0; i < outs.size(); i++) {
+        const OutSec &o = outs[i];
+        if (!o.size && o.parts.empty()) continue;
+        fprintf(f, "%-10s 0    %08x    %08x\n", o.name.c_str(), o.addr, o.size);
+        for (size_t p = 0; p < o.parts.size(); p++) {
+            const InSec *c = all[o.parts[p]];
+            fprintf(f, "                  %08x    %08x     %s (%s)\n", c->addr, c->size,
+                    mods[c->module].name.c_str(), c->name.c_str());
+        }
+        fprintf(f, "\n");
+    }
+    fclose(f);
 }
 
 static bool starts(const std::string &a, const char *p) { return a.compare(0, strlen(p), p) == 0; }
@@ -58,6 +84,10 @@ int main(int argc, char **argv)
         if (a == "--ram_model")             { lk.opt.ram_model = true;  lk.opt.rom_model = false; lk.opt.model_given = true; continue; }
         if (a == "--rom_model")             { lk.opt.rom_model = true;  lk.opt.ram_model = false; lk.opt.model_given = true; continue; }
         if (a == "--verbose" || a == "-v")  { lk.opt.verbose = true; continue; }
+        if (starts(a, "--stack_size="))     { lk.opt.stack_size = strtol(a.c_str() + 13, 0, 0); continue; }
+        if (starts(a, "--heap_size="))      { lk.opt.heap_size = strtol(a.c_str() + 12, 0, 0); continue; }
+        if (a == "-stack" && i + 1 < argc)  { lk.opt.stack_size = strtol(argv[++i], 0, 0); continue; }
+        if (a == "-heap" && i + 1 < argc)   { lk.opt.heap_size = strtol(argv[++i], 0, 0); continue; }
         if (starts(a, "-mv") || starts(a, "--abi=") || a == "-c" || a == "-cr"
             || a == "--no_compress" || starts(a, "--diag")) continue;
         if (a == "-l" && i + 1 < argc)      { lk.opt.inputs.push_back(argv[++i]); continue; }

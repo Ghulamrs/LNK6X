@@ -239,16 +239,26 @@ bool Link::write_image()
 
     /* ------------------------------------------------------- the segments */
     segs.clear();
+    /*  **A segment is a run of one kind of section - bytes from the file, or none -** that
+     *  never mixes write with execute (q04 keeps .text and .data apart), and it may cross an
+     *  alignment gap when the file has the same gap: q07's .const and .extab are two bytes
+     *  apart and one segment. Mixing the kinds put hello's .switch, .cinit and unwind tables
+     *  past filesz, where the loader zero-filled them and _c_int00 ran off a blank table. */
+    std::vector<bool> seg_file;
     for (size_t k = 0; k < placed.size(); k++) {
         OutSec &o = outs[placed[k]];
         if (!o.size) continue;
-        if (!segs.empty()) {
+        bool file = (o.type != SHT_NOBITS);     /* .c6xabi.exidx is SHT_C6000_UNWIND: file */
+        if (!segs.empty() && seg_file.back() == file) {
             Seg &g = segs.back();
             u32 flags = g.flags | o.pflags;
             bool mixes = (flags & PF_W) && (flags & PF_X);
-            if (!mixes && g.vaddr + g.memsz == o.addr) {
-                g.memsz += o.size;
-                if (o.type == SHT_PROGBITS) g.filesz = (o.offset + o.size) - g.offset;
+            u32 end = g.vaddr + g.memsz;
+            u32 gap = o.addr - end;
+            bool near = o.addr >= end && gap < (o.align > 8 ? o.align : 8);
+            if (!mixes && near && (!file || o.offset - (g.offset + g.filesz) == gap)) {
+                g.memsz = (o.addr + o.size) - g.vaddr;
+                if (file) g.filesz = (o.offset + o.size) - g.offset;
                 g.flags = flags;
                 if (o.align > g.align) g.align = o.align;
                 continue;
@@ -256,9 +266,10 @@ bool Link::write_image()
         }
         Seg g;
         g.offset = o.offset; g.vaddr = o.addr; g.paddr = o.addr;
-        g.filesz = (o.type == SHT_PROGBITS) ? o.size : 0;
+        g.filesz = file ? o.size : 0;
         g.memsz = o.size; g.flags = o.pflags; g.align = o.align;
         segs.push_back(g);
+        seg_file.push_back(file);
     }
 
     u32 ph_off = align_up(pos, 4);
