@@ -27,10 +27,11 @@ always `0xFFFFFFFF`. In a link that brings in the runtime, some of them stop bei
 
 ## Rules read rather than understood
 
-**`.bss` is allocated before everything else.** q03 forces it and `__TI_STATIC_BASE` explains
-it, but only one probe shows it. A command file that gives another section an explicit address
-below `.bss`, or one with two `.bss`-like sections, would say whether the rule is about `.bss`
-by name or about the near region in general.
+**`.bss` is not allocated first; it is allocated by size like the rest.** This linker said the
+opposite until 2026-09-29, on q03's evidence - and q03's `.bss` is 0x100 against a 0x20 `.text`,
+q12's 0x40 against 0x20, so the size rule alone lays both first. The kernels settled it: sieve's
+0x4E21 `.bss` follows its 0x9180 `.text` in lnk6x 7.4.4's image, and laid first here it moved
+every section and the entry point with it.
 
 **PCR_S21 is relative to the fetch packet - settled.** q11 puts a `CALLP` at offset 8 of its
 packet and this linker matches lnk6x byte for byte, so `target - (P & ~31)` is the rule and
@@ -226,9 +227,47 @@ of 16. What it took, each read off the oracle's map or bytes:
 **Still different from lnk6x, and why q07 is 15 of 16:** the index has no linker-made
 entries - lnk6x adds an EXIDX_CANTUNWIND for kept code with no entry of its own and merges
 adjacent ones (42 entries against 37 here). It changes nothing for a program that does not
-throw through such code. `tests/known-differ.txt` still holds the old byte counts for the
-library probes; they moved because the images are now laid out as the oracle's and differ in
-the index and the symbol table, not because they got further away.
+throw through such code. `tests/known-differ.txt` was re-pinned on 2026-09-29 (below).
+
+## The six kernels against lnk6x 7.4.4, 2026-09-29
+
+The C6747 benchmark kernels of C++Optimize (`tools/c6747-levels`: fib, hash, isort, matmul,
+sieve, virt, cpp11 -O1 and -O2, assembled by ASM6x) linked by this linker and by lnk6x 7.4.4
+from the same object, `C6747.cmd`, `--heap_size=0x800 --stack_size=0x800` and 7.4.4's
+`rts6740_elf_eh.lib`. All twelve link, print their `.expected` on TI's cycle-accurate simulator
+and stop at `C$$EXIT`; after the four rules below every output section of every image has the
+oracle's address and size, but for isort's `.cinit` and the index behind it, 8 bytes up (below). Each rule was read off the two maps, section by section:
+
+  * **`.TI.symbol.alias` is honoured.** A u32 version 1, a u16 count, `TI\0`, then pairs of
+    symbol indices, alias first: remove.obj's is (`remove`, `unlink`), typeinfo_.obj's are
+    the C2 and D2 constructors and destructors standing for C1 and D1. lnk6x resolves the
+    alias to its target - `remove` and `unlink` share one address in every TI map, and no
+    `.text:remove` is laid - so the alias's own section is kept only if something else names
+    it. 491 of the runtime's members carry the section; this linker read none of it, laid the
+    0x20-byte stub, and every address after it in `.text` and every data section was 0x20 off.
+  * **A tie between contributions goes to the name after the colon, and a bare section is
+    keyed by its object's name.** fib.obj's `.text` precedes memory.obj's `.text:malloc` at
+    0x180 and tdeh_uwentry_c6000.obj's `.text` follows fseek.obj's `.text:fseek` at 0x120 -
+    116 of 116 tie groups across six maps of 7.4.4 and 8.2.2 agree. The old reading, "a bare
+    `.text` after every subsection", explained the second and not the first.
+  * **`.bss` takes its place by size** (above).
+  * **A section the linker alone sizes is written WA, 8-aligned** - q07's `.stack`, which this
+    linker wrote with flags 0 and alignment 1 while placing it right.
+
+**What still differs, all measured and none of it running code:**
+
+  * two words of `.text`, `_Z16find_et_setup_pr` and `__TI_ut_entry_cmp` loading the unwind
+    table's end, which moves with the linker-made EXIDX_CANTUNWIND entries this linker does
+    not write - 0x1D0 against 0x170 bytes of index in fib;
+  * `.cinit` is 4-aligned by 7.4.4 and 8-aligned by 8.2.2, which this linker follows; where
+    the 4 bytes land in front of an 8-aligned `.cinit` (isort), it and the index after it sit
+    8 bytes higher and the words that name them follow;
+  * 7.4.4 writes an *empty* `.bss`, `.data`, `.init_array` or `.neardata` with flags 1 (W) and
+    an empty `.rodata` with 0, dropping ALLOC; 8.2.2 keeps 3 and 2, as the bed's images show
+    and this linker writes;
+  * the attributes blob, the symbol table and its strings, as in every runtime probe.
+
+The two kernels' cycle counts against lnk6x's images are in C++Optimize's CLAUDE.md.
 
 ## Things that are this linker's own
 

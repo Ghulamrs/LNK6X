@@ -37,9 +37,10 @@ The test is the comparison: each probe is linked again from the objects in `test
 image is held against lnk6x's, byte for byte. A TI image carries no time stamp and no build
 path, so nothing has to be pinned first - the two files either agree or they do not.
 
-Eight of them agree today: q01, both halves of q02, q03, q04, q05-model-ram, q06 and q08. Two
-link TI's runtime, which is not ours to check in, and four were added to links.txt after the
-box last ran and have no reference image yet. One run of
+Eighteen of the twenty-five agree today, and the seven that link TI's runtime or its .cinit
+differ by a pinned count each, in the unwind index, the attributes blob and the symbol table
+(`tests/known-differ.txt`, and docs/known.md for each). The runtime library the bed links is
+checked in under `tests/ref`. One run of
 
     sh tests/probes.sh
 

@@ -76,6 +76,20 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
         break;
     }
 
+    /*  .TI.symbol.alias: a u32 version, a u16 count, "TI\0", then count pairs of u32 symbol
+     *  indices, alias first - remove.obj's says (remove, unlink), typeinfo_.obj's (C2, C1). */
+    for (u16 i = 0; i < shnum; i++) {
+        const u8 *s = sh + (size_t)i * shentsize;
+        if (rd32(s + 4) != SHT_TI_SYMALIAS) continue;
+        u32 off = rd32(s + 16), size = rd32(s + 20);
+        if (size < 9 || off + size > n || rd32(p + off) != 1) continue;
+        u32 count = rd16(p + off + 4);
+        for (u32 k = 0; k < count && 9 + 8 * (k + 1) <= size; k++) {
+            u32 a = rd32(p + off + 9 + 8 * k), t = rd32(p + off + 13 + 8 * k);
+            if (a < m.syms.size() && t < m.syms.size() && a != t) m.syms[a].alias = (int)t;
+        }
+    }
+
     /* the relocations, filed against the section they apply to */
     for (u16 i = 0; i < shnum; i++) {
         const u8 *s = sh + (size_t)i * shentsize;

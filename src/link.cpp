@@ -83,6 +83,21 @@ bool Link::in_image(int mi, int sym) const
     return (mods[mi].secs[y.shndx].flags & SHF_ALLOC) != 0;
 }
 
+/*  An alias stands for its target: the target of the same object where that defines it, and
+ *  the table's definition where it does not (remove.obj's unlink is lowlev.obj's). */
+void Link::resolve_alias(int &mod, int &sym) const
+{
+    for (int hops = 0; hops < 8; hops++) {
+        const Sym &y = mods[mod].syms[sym];
+        if (y.alias < 0) return;
+        const Sym &t = mods[mod].syms[y.alias];
+        std::map<std::string, std::pair<int, int> >::const_iterator d = defined.find(t.name);
+        if (t.shndx == SHN_UNDEF && d != defined.end()) { mod = d->second.first; sym = d->second.second; }
+        else if (t.shndx != SHN_UNDEF) sym = y.alias;
+        else return;
+    }
+}
+
 bool Link::take_module(int mi)
 {
     for (size_t si = 0; si < mods[mi].secs.size(); si++) mods[mi].secs[si].module = mi;
@@ -200,27 +215,26 @@ bool Link::read_inputs()
                 asked[y.name] = true;
                 want.push_back(y.name);
             }
+        /*  One name at a time, the member taken before the next name is asked: a member
+         *  taken for one name may define the next - lowlev.obj defines both unlink and
+         *  remove - and lnk6x then takes no second member for it (fib against the runtime). */
         bool took = false;
         for (size_t a = 0; a < libs.size(); a++) {
             Archive &ar = libs[a];
-            std::vector<u32> pull;
             for (size_t u = 0; u < want.size(); u++) {
                 if (defined.find(want[u]) != defined.end()) continue;
                 for (size_t k = 0; k < ar.index.size(); k++) {
                     if (ar.index[k].first != want[u]) continue;
                     u32 off = ar.index[k].second;
                     if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) break;
-                    if (std::find(pull.begin(), pull.end(), off) == pull.end()) pull.push_back(off);
+                    Module m;
+                    if (!ar.member(off, m, err)) return false;
+                    ar.taken.push_back(off);
+                    mods.push_back(m);
+                    if (!take_module((int)mods.size() - 1)) return false;
+                    took = true;
                     break;
                 }
-            }
-            for (size_t k = 0; k < pull.size(); k++) {
-                Module m;
-                if (!ar.member(pull[k], m, err)) return false;
-                ar.taken.push_back(pull[k]);
-                mods.push_back(m);
-                if (!take_module((int)mods.size() - 1)) return false;
-                took = true;
             }
         }
         if (!took) break;
@@ -519,15 +533,16 @@ bool Link::follow(std::pair<int, int> at)
             const Rel &rl = c.relocs[r];
             if (rl.sym >= mods[at.first].syms.size()) { err = c.name + ": a relocation names no symbol"; return false; }
             const Sym &y = mods[at.first].syms[rl.sym];
-            int tm = at.first; u16 tx = y.shndx;
+            int tm = at.first, ts = (int)rl.sym; u16 tx = y.shndx;
             /*  A name that is not the object's own goes through the table of definitions,
              *  even when this object defines it too: q14's weak `wk` is defined in the
              *  referring object and lnk6x still reaches the strong one in the other. */
             if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
                 std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
                 if (d != defined.end()) {
-                    tm = d->second.first;
-                    tx = mods[tm].syms[d->second.second].shndx;
+                    tm = d->second.first; ts = d->second.second;
+                    resolve_alias(tm, ts);
+                    tx = mods[tm].syms[ts].shndx;
                 } else if (y.shndx == SHN_UNDEF) {
                     /*  An undefined weak reference is not an error: it is zero, and it pulls
                      *  nothing in with it (q14 - lnk6x keeps it as UNDEF WEAK). */
@@ -648,19 +663,17 @@ namespace {
 
 /*  **Descending size, and a tie goes to the name.** The size is q07's map, plain enough.
  *  The tie-break was not - it is neither the archive's order (46% of 171 ties, which is
- *  chance) nor the module summary's - and it turned out to be the section's own name,
- *  ascending, with one wrinkle: a bare `.text` sorts *after* every `.text:something`,
- *  and the same for `.fardata`. 257 of 257 ties across four maps agree, the only
- *  exclusions being `.c6xabi.exidx`, which lnk6x sorts by function address instead and
- *  which this linker does not sort at all yet (docs/known.md). */
+ *  chance) nor the module summary's - and it turned out to be the name after the colon,
+ *  ascending, and for a bare `.text` or `.fardata` the *object's* name in its place: q07's
+ *  tdeh_uwentry_c6000.obj (.text) follows fseek.obj (.text:fseek) and fib's fib.obj (.text)
+ *  precedes memory.obj (.text:malloc), both at 0x180. 116 of 116 tie groups across six maps
+ *  of lnk6x 7.4.4 and 8.2.2 agree; the one exclusion is `.c6xabi.exidx`, which lnk6x sorts
+ *  by function address instead and this linker does not sort at all yet (docs/known.md). */
 struct NameKey {
-    bool bare;
-    const std::string *name;
-    explicit NameKey(const std::string &n) : bare(n.find(':') == std::string::npos), name(&n) {}
-    bool operator<(const NameKey &o) const {
-        if (bare != o.bare) return !bare;          /* a subsection comes first */
-        return *name < *o.name;
-    }
+    std::string key;
+    NameKey(const std::string &n, const std::string &object)
+        : key(n.find(':') == std::string::npos ? object : n.substr(n.find(':') + 1)) {}
+    bool operator<(const NameKey &o) const { return key < o.key; }
 };
 
 /*  The same question for whole output sections: bigger first, a tie by name. */
@@ -675,10 +688,12 @@ struct BiggerOut {
 
 struct BiggerPart {
     const std::vector<InSec *> &all;
-    explicit BiggerPart(const std::vector<InSec *> &a) : all(a) {}
+    const std::vector<Module> &mods;
+    BiggerPart(const std::vector<InSec *> &a, const std::vector<Module> &m) : all(a), mods(m) {}
     bool operator()(int x, int y) const {
         if (all[x]->size != all[y]->size) return all[x]->size > all[y]->size;
-        return NameKey(all[x]->name) < NameKey(all[y]->name);
+        return NameKey(all[x]->name, mods[all[x]->module].name) <
+               NameKey(all[y]->name, mods[all[y]->module].name);
     }
 };
 } // namespace
@@ -691,9 +706,6 @@ bool Link::allocate()
      *  learn the sizes compose_cinit needs, and again once .cinit has its own - and `used`
      *  accumulates, so without this the second pass would lay everything after the first. */
     for (size_t i = 0; i < cmd.mem.size(); i++) cmd.mem[i].used = 0;
-    /*  .bss goes first. It is not first in any command file the bed uses, and it still comes
-     *  out at the origin in q03 - what decides it is that __TI_STATIC_BASE points at .bss, so
-     *  the near region has to start where the range does. */
     /*  .stack and .sysmem are the linker's: nothing contributes to them, and their size is
      *  --stack_size and --heap_size - but only in a link that asked for the names, which is
      *  the runtime's doing. Without one both stay at zero, as every bare probe shows. */
@@ -725,24 +737,24 @@ bool Link::allocate()
      *  contents from their own position. q07 puts .cinit at 0x30 and .exidx at 0x148
      *  after .switch at 0x14, which no size rule explains and this one does.
      *
-     *  `.bss` still goes first: __TI_STATIC_BASE points at it, which q03 shows. */
+     *  `.bss` is not a case of its own: q03 and q12 lay it first because it is the largest
+     *  section there, and sieve's 0x4E21 .bss follows its 0x9180 .text (lnk6x 7.4.4). */
     std::vector<int> order;
-    int bi = out_index(".bss");
-    if (bi >= 0 && !outs[bi].parts.empty()) order.push_back(bi);
-
     std::vector<std::pair<u32, int> > rest;      /* -size, so a sort puts the big first */
     std::vector<int> held, unnamed;
     for (size_t i = 0; i < outs.size(); i++) {
-        if ((int)i == bi) continue;
         /*  A section the command file never names comes after every one it does, whatever
          *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
         if (outs[i].run.empty()) { unnamed.push_back((int)i); continue; }
         if (outs[i].name == ".cinit" || outs[i].name == ".c6xabi.exidx") { held.push_back((int)i); continue; }
-        u32 want = outs[i].reserve;
+        /*  The reservation is a floor under the parts, not a term added to them: .sysmem is
+         *  0x800 with memory.obj's 8 bytes inside it, and lnk6x lays .stack, a tie by name, first. */
+        u32 want = 0;
         for (size_t p = 0; p < outs[i].parts.size(); p++) {
             InSec *c = all[outs[i].parts[p]];
             want = align_up(want, c->align) + c->size;
         }
+        if (want < outs[i].reserve) want = outs[i].reserve;
         rest.push_back(std::make_pair(~want, (int)i));   /* ~ rather than -, for unsigned */
     }
     /*  **A tie between two output sections goes to the name, ascending** - q19 has .const
@@ -766,6 +778,10 @@ bool Link::allocate()
         if (o.parts.empty()) {                       /* .stack, .sysmem: size without input */
             if (!r) r = cmd.mem.empty() ? 0 : &cmd.mem[0];
             if (!r) { err = o.name + ": no memory range for it"; return false; }
+            /*  A section the linker alone sizes is writable, allocated and 8-aligned in its
+             *  header - q07's .stack, f3/al8 - where an empty one keeps the table's 0. */
+            o.flags = SHF_ALLOC | SHF_WRITE; o.pflags = PF_R | PF_W;
+            if (o.align < 8) o.align = 8;
             u32 at = align_up(r->origin + r->used, o.align > 8 ? o.align : 8);
             o.addr = at; o.size = o.reserve;
             at += o.reserve;
@@ -798,7 +814,7 @@ bool Link::allocate()
          *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
          *  whole of the run, and its map is the evidence. A tie goes to the name - see
          *  BiggerPart, which is where the reading of it is written down. */
-        std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
+        std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all, mods));
         o.addr = at;
         /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
          *  fills its holes. q07's .const puts two 4-byte strings at 0x905c and 0x9084, in
@@ -852,6 +868,11 @@ bool Link::sym_addr(int mod, int sym, u32 &a)
         if (d != defined.end() &&
             (d->second.first != mod || d->second.second != sym))
             return sym_addr(d->second.first, d->second.second, a);
+    }
+    if (y.alias >= 0) {
+        int am = mod, as = sym;
+        resolve_alias(am, as);
+        if (am != mod || as != sym) return sym_addr(am, as, a);
     }
     if (y.shndx == SHN_ABS) { a = y.value; return true; }
     if (y.shndx == SHN_UNDEF) {

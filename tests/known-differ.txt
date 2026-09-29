@@ -1,9 +1,11 @@
 ; Probes the bed lets differ, by at most the bytes given - each difference is in docs/known.md.
 ; run.sh fails a probe that differs by more, and one listed here that matches: take it off then.
-q05-model-rom   2876   ; the .cinit table's layout and compression
-q07-lib        18397   ; .cinit, the unsorted .c6xabi.exidx and the attributes blob
+; Re-pinned 2026-09-29: the four runtime probes are laid out as the oracle's now and differ in
+; the unwind index, the attributes blob and the symbol table, and in nothing that runs.
+q05-model-rom   2876   ; the attributes blob and the symbol table
+q07-lib        27420   ; two words naming the unwind table's end, the index without linker-made entries, attributes, symbols
 q15-far          906   ; no trampolines
-q16-ride        3023   ; .cinit and the runtime's layout, as q07
-q17-pcr-here   18397   ; R_C6000_PCR_L16/H16 not settled, and q07's
-q17-pcr-moved  18423   ; as q17-pcr-here, linked 0x1234000 higher
-q18-cinit      18524   ; the .cinit table's layout and compression
+q16-ride        3023   ; the attributes blob and the symbol table
+q17-pcr-here   27420   ; as q07
+q17-pcr-moved  27596   ; as q07, linked 0x1234000 higher
+q18-cinit      27534   ; as q07

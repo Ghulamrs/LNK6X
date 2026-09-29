@@ -174,10 +174,13 @@ bool Link::write_image()
             if (y.lnk_out >= 0) { o.value = y.value; o.shndx = (u16)(y.lnk_out + 1); }
             else if (y.shndx == SHN_ABS) { o.value = y.value; o.shndx = SHN_ABS; }
             else {
-                if (y.shndx >= m.secs.size()) continue;
-                InSec &c = m.secs[y.shndx];
+                int am = (int)mi, as = (int)k;       /* an alias is written at its target */
+                resolve_alias(am, as);
+                const Sym &t = mods[am].syms[as];
+                if (t.shndx >= mods[am].secs.size()) continue;
+                InSec &c = mods[am].secs[t.shndx];
                 if (!c.live || c.out < 0) continue;
-                o.value = c.addr + y.value;
+                o.value = c.addr + t.value;
                 o.shndx = (u16)(c.out + 1);
             }
             syms.push_back(o);
@@ -326,7 +329,7 @@ bool Link::write_image()
         wr32(p, shname[i]); wr32(p + 4, outs[i].type); wr32(p + 8, outs[i].flags);
         wr32(p + 12, outs[i].addr); wr32(p + 16, outs[i].offset); wr32(p + 20, outs[i].size);
         wr32(p + 24, 0); wr32(p + 28, 0);
-        wr32(p + 32, outs[i].parts.empty() ? 1u : outs[i].align);
+        wr32(p + 32, (outs[i].parts.empty() && !outs[i].reserve) ? 1u : outs[i].align);
         wr32(p + 36, outs[i].entsize);
     }
     u8 *p = sh + (size_t)(nout + 1) * 40;

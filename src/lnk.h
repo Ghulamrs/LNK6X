@@ -21,6 +21,7 @@ typedef unsigned long long u64;
 enum {
     SHT_NULL = 0, SHT_PROGBITS = 1, SHT_SYMTAB = 2, SHT_STRTAB = 3, SHT_RELA = 4,
     SHT_NOBITS = 8, SHT_REL = 9,
+    SHT_TI_SYMALIAS = 0x7F000006,   /* .TI.symbol.alias: pairs of (alias, target) symbol */
     SHT_C6000_ATTRIBUTES = 0x70000003u,
     SHT_TI_SECTION_FLAGS = 0x7F000005u,
     SHT_TI_SYMBOL_ALIAS  = 0x7F000006u
@@ -88,7 +89,10 @@ struct Sym {
      *  the address - but lnk6x writes it against an output section: q07 has __TI_STACK_END in
      *  .stack and __TI_CINIT_Base in .cinit. This says which, or -1 for an ordinary symbol. */
     int lnk_out;
-    Sym() : value(0), size(0), info(0), other(0), shndx(0), out(-1), lnk_out(-1) {}
+    /*  .TI.symbol.alias: this name stands for that symbol of the same object - the runtime's
+     *  `remove` is `unlink`, and lnk6x lays no .text:remove - or -1 for an ordinary symbol. */
+    int alias;
+    Sym() : value(0), size(0), info(0), other(0), shndx(0), out(-1), lnk_out(-1), alias(-1) {}
 };
 
 /* one input section, from one object */
@@ -219,6 +223,7 @@ struct Link {
     bool read_inputs();
     bool take_module(int mi);
     bool in_image(int mi, int sym) const;
+    void resolve_alias(int &mod, int &sym) const;
     void add_linker_symbols();
     void set_linker_symbols();
     void write_map();
