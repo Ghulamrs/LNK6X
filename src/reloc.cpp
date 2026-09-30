@@ -121,11 +121,19 @@ bool pcr_s21_reaches(u32 P, u32 V)
  *      00000000   NOP
  *
  *  B3 is untouched, so a CALLP's return address and a B's lack of one both survive it. */
-void tramp_code(u8 *p, u32 V)
+/*
+ *  **And when the trampoline itself reaches the callee, it is a plain branch**: `B .S1 callee`
+ *  (00000010 with the PCR_S21 field), `NOP 5` (00008000), six zero words - q20's to a callee
+ *  0x20 on, q27-reach-fwd-out's to two 0x3FFFFC and 0x3FFFC0 on, the last words of reach from
+ *  their own fetch packets. Same 32 bytes either way, so which it is never moves anything. */
+void tramp_code(u8 *p, u32 V, u32 P)
 {
-    static const u32 w[8] = { 0x053c54f7u, 0x0500002au, 0x0500006au, 0x00280362u,
-                              0x053c52e6u, 0x00006000u, 0x00000000u, 0x00000000u };
-    for (int i = 0; i < 8; i++) wr32(p + 4 * i, w[i]);
+    static const u32 lng[8] = { 0x053c54f7u, 0x0500002au, 0x0500006au, 0x00280362u,
+                                0x053c52e6u, 0x00006000u, 0x00000000u, 0x00000000u };
+    static const u32 sht[8] = { 0x00000010u, 0x00008000u, 0, 0, 0, 0, 0, 0 };
+    bool near = P && pcr_s21_reaches(P, V) && !((V - (P & ~0x1Fu)) & 3);
+    for (int i = 0; i < 8; i++) wr32(p + 4 * i, near ? sht[i] : lng[i]);
+    if (near) { field(p, (V - (P & ~0x1Fu)) >> 2, 7, 21); return; }
     field(p + 4, V & 0xFFFFu, 7, 16);
     field(p + 8, (V >> 16) & 0xFFFFu, 7, 16);
 }

@@ -197,8 +197,7 @@ they compound, so the three are not useful as regression tests until the first f
     **A PCR_S21 (B, CALLP) that cannot reach its target goes through a trampoline**, and q15's
     image is byte-identical to lnk6x's (8.2.2). What was read off q15-far.out and .map and is
     implemented: a 32-byte input section `$Tramp$S$$faraway` in the caller's own module, laid
-    straight after the calling input section in its output section (0xC0000020, `.text` grows
-    0x20 to 0x40), the branch's PCR_S21 retargeted to it (field 8 words); its symbol a local
+    at the end of the caller's output section (0xC0000020, `.text` grows 0x20 to 0x40), the branch's PCR_S21 retargeted to it (field 8 words); its symbol a local
     STT_FUNC with `other` 0, value its address, after its module's own locals (symbol 21 of
     q15, straight after .fartext's section symbol); and the map's `FAR CALL TRAMPOLINES` table,
     the callee named by its input section and offset (`$.fartext:q15-far.obj$0x0`). Its eight
@@ -214,39 +213,64 @@ they compound, so the three are not useful as regression tests until the first f
         00000000   NOP
 
     B3 is the CALLP's own return address and is not touched, so a plain `B` works the same way.
-    **The layout runs to a fixed point** (`Link::layout`): allocate, find every PCR_S21 that
-    reaches neither its target nor a trampoline to it, add one trampoline per callee per pass
-    after the first such call in address order, allocate again - a trampoline moves everything
-    behind it, and the next call to the same callee may reach the one just made. None is ever
-    removed, so it ends. And q15 showed one more thing that is not about trampolines:
-    **.fartext is flags 7**, writable, though it holds only code, where .text in the same range is
-    6 - so an output section lnk6x has no standard name for is written SHF_WRITE here (q12's
-    .mybss is 3 either way).
+    **The layout runs to a fixed point** (`Link::layout`): allocate, find the calls that want a
+    trampoline and reach none to their callee, make one per callee per pass, allocate again - a
+    trampoline moves what is behind it, and the next call may reach the one just made. None is
+    removed, and a caller whose own is still out of reach (an input section past 4 MB) is
+    refused by name rather than given another, so it ends.
 
-    **Chosen without evidence, and each asked of lnk6x by a probe** (tests/probes/q20-q27, linked
-    by 8.2.2 and, as `<name>-744`, by 7.4.4 - `sh tests/probes.sh` runs them):
+    **What probes q20-q27 settled (lnk6x 8.2.2 and 7.4.4, run 2026-09-30), all implemented:**
 
-      * q20: whether the SHF_WRITE is the name's - a code section in reach and a read-only data
-        section, neither standard. Taken here: yes, both.
-      * q21: a caller among three .text parts of three sizes - the trampoline straight after
-        its caller (taken here), among the parts by its size, or at the end of .text.
-      * q22: a caller 0x24 bytes long - the trampoline aligned 32 (taken here: one whole fetch
-        packet, which is never wrong), or 4 or 8. And it never fills a gap here.
-      * q23: sharing - one per callee *address* reused by every later call in reach (taken
-        here, whatever the calling section), or one per name or per section; and which name a
-        shared one takes when the first call used an alias (here: the first call's name).
-      * q24: two objects calling one callee - one trampoline or two, and where the symbol goes.
-      * q25: a call to a non-global label - what the relocation names and the trampoline is
-        called (here: the symbol's name, or its section's if it has none).
-      * q26: two trampolines to one callee from callers 8 MB apart - the second's name (here:
-        the same name twice; lnk6x may add a suffix).
-      * q27: the reach, five links - on the last word either way, one word past, and 64 kB
-        short, which is what a linker with a safety margin would trampoline anyway. Here: the
-        field's exact reach, no margin.
+      * **Placement (q21, q24)**: at the *end* of the caller's output section, after every input
+        section of it - q21's follows .text:small, not the .text:caller that made it, and q24's
+        follows the second object's .text. Never in a gap. It belongs to the module of the
+        section it follows in the map (q24: q24-two-b.obj) - or of the highest call; q24 cannot
+        tell the two apart.
+      * **Two forms, one size (q20, q27)**: where the trampoline itself reaches the callee it is
+        `B callee; NOP 5` and six zero words (00000010 with the PCR_S21 field, 00008000); the
+        B10 form only where it does not. Both are 32 bytes.
+      * **Sharing (q23, q24)**: one per callee *place* - an input section and an offset - for
+        every call in reach of it, across sections and objects; faraway and faralias at one
+        address share one. Two only where a caller cannot reach the first (q26).
+      * **Naming (q23, q25, q26)**: `$Tramp$S$$` and the symbol of the lowest-addressed call to
+        that place - q23's is `$Tramp$S$$faralias`, the name only its call at 0x0 used; a local
+        label's name (q25, whose relocation does name the label); the same name twice in q26.
+      * **Order (q23, q26, q27)**: several in one section go in descending order of their calls'
+        addresses - by the highest call or the lowest, which q28 asks.
+      * **Reach (q27)**: the field's exact reach, no margin - nothing at 0xC03F0000 or on the last
+        word either way, one each a word or a fetch packet past it.
+      * **When a call gets one (q20)**: also when the callee's output section is laid *after*
+        the caller's - q20's .text calls .mycode, which no file names and so is laid last, and
+        lnk6x makes `$Tramp$S$$near` (the short form) for a callee 0x38 bytes away - yet the
+        CALLP itself goes straight to `near`: only a branch out of reach is sent through one.
+        q29 asks whether it is the order of allocation (taken here) or only an unnamed section.
 
-    run.sh holds each `<name>-744` image to this linker's `--cgt=7.4.4` link of the same objects
-    (tests/probes/links744.txt, q15 included); until the box has run them they SKIP. Nothing yet
-    says 7.4.4's trampoline is 8.2.2's.
+    **And four things the probes showed that are not about trampolines**, implemented:
+
+      * a section whose name begins `.far` is writable, code or not (q15 and q26's .fartext are
+        7; q26's .midtext and q20's .mycode are 6, q20's .myconst 2);
+      * of the standard sections the command file does not name, only .fardata (beside a named
+        .far) and .rodata (beside a named .const) are added - q26 and q27 name only code and get
+        nothing else, so no .bss and __TI_STATIC_BASE absolute; and **7.4.4 adds an empty
+        .cinit** as well. Every kernel command file names all sixteen, so nothing moves there;
+      * sections the file never names are laid by size among themselves (q20's .mycode 0x20
+        before .myconst 4), after every named one;
+      * a map's trampoline table writes the callee and trampoline addresses on a callee's first
+        call line only (q23).
+
+    **Two differences left, both measured, both left because mending either moves every kernel
+    image and the harness** (tests/known-differ.txt, classes S and F):
+
+      * S: lnk6x names a subsection's section symbol by the input (`.text:big`), this linker by the
+        output section (`.text`). With that one change q21, q23 and their 7.4.4 twins match
+        exactly - it is `str.add(type == STT_SECTION ? outs[c.out].name : y.name)` in image.cpp -
+        but every runtime image's symbol table moves with it.
+      * F: 7.4.4 writes an empty section without SHF_ALLOC (.data 1, .cinit 0, .c6xabi.exidx 0x80)
+        and its own attributes blob (`08 08 0a 05 0c 05` where 8.2.2 has `08 09 0a 03 0c 03`). That
+        is every 7.4.4 twin's whole difference but for S.
+
+    **Still asked of lnk6x**: q28 (the order by highest or lowest call) and q29 (allocation
+    order or unnamed section), both linked by 8.2.2 and 7.4.4 - `sh tests/probes.sh`.
 
 ## Not implemented
 

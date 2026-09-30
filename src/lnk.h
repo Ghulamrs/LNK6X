@@ -179,6 +179,8 @@ struct OutSec {
     u32 pflags;                  /* the segment attributes, taken from the input sections */
     std::vector<int> parts;      /* indices into Link::all, in allocation order */
     bool progbits;               /* a fill makes an empty section initialised */
+    bool unnamed = false;        /* the command file does not name it: laid after all it does */
+    int  rank = -1;              /* its place in the last allocation order */
     std::string load, run;
     OutSec() : type(SHT_NOBITS), flags(0), addr(0), size(0), align(1), entsize(0), offset(0),
                reserve(0), pflags(0), progbits(false) {}
@@ -289,7 +291,12 @@ struct Link {
     std::vector<Tramp> tramps;
     bool layout();
     bool trampolines(bool &added);
-    int  tramp_for(u32 target, u32 P) const;     /* index into tramps in reach of P, or -1 */
+    int  tramp_for(int tm, int tsec, u32 toff, u32 P) const;   /* one in reach of P, or -1 */
+    void retarget_tramps();                      /* each one's target from its callee's place */
+    /*  Whether a branch from `c` at P to V must go through a trampoline: out of reach, or its
+     *  callee's output section laid after the caller's (q20), so not placed when lnk6x asked. */
+    bool wants_tramp(const InSec *c, u32 P, u32 V, int tm, int ts) const;
+    void callee_of(int mod, u32 sym, int &tm, int &ts) const;
     bool write_image();
     bool sym_addr(int mod, int sym, u32 &a);
     int  out_index(const std::string &name) const;
@@ -318,8 +325,8 @@ u32 reloc_width(u32 type);              /* the bytes the place occupies: 4, 2 fo
  *  more than 2^20 of them either way. Misaligned is "reaches" here - it is not a question a
  *  trampoline answers, and apply_reloc refuses it by name. */
 bool pcr_s21_reaches(u32 P, u32 V);
-/*  The 32 bytes of a trampoline to V: lnk6x's eight words, read off q15-far.out. */
-void tramp_code(u8 *p, u32 V);
+/*  The 32 bytes of a trampoline at P to V: `B V` when it reaches, lnk6x's B10 form when not. */
+void tramp_code(u8 *p, u32 V, u32 P);
 
 inline u16 rd16(const u8 *p) { return (u16)(p[0] | (p[1] << 8)); }
 inline u32 rd32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }

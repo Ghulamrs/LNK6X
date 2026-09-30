@@ -580,8 +580,19 @@ bool Link::build_sections()
         standard_flags(o.name, o.flags, o.entsize);
         outs.push_back(o);
     }
+    /*  **Only two standard sections are added that the command file does not name**: .fardata
+     *  beside a named .far and .rodata beside a named .const, in that order after the named
+     *  ones. q08 and q09 name .far and .const and get both back; q16 (ride.cmd) leaves out the
+     *  unwind sections and does not; q26 and q27 name only their code sections and get
+     *  nothing else at all - no .bss, and __TI_STATIC_BASE absolute. The table's order and
+     *  flags still hold for what is added. */
+    const bool named_far = out_index(".far") >= 0, named_const = out_index(".const") >= 0;
     for (int i = 0; i < nstandard; i++) {
         if (out_index(standard[i].name) >= 0) continue;
+        std::string sn = standard[i].name;
+        /*  7.4.4 adds an empty .cinit as well: q26 and q27, linked by it, have one no file named. */
+        if (!((sn == ".fardata" && named_far) || (sn == ".rodata" && named_const) ||
+              (sn == ".cinit" && opt.cgt744))) continue;
         OutSec o;
         o.name = standard[i].name;
         o.flags = standard[i].flags; o.entsize = standard[i].entsize;
@@ -653,13 +664,12 @@ bool Link::build_sections()
             if (c->flags & SHF_EXECINSTR) o.pflags |= PF_X;
         }
         o.type = o.progbits ? SHT_PROGBITS : SHT_NOBITS;
-        /*  **A section lnk6x has no name for is written writable**, code or not: q15's
-         *  .fartext holds nothing but a function and is flags 7 in its image, where .text in
-         *  the same range is 6; q12's .mybss is 3 either way. One image says so, and
-         *  tests/probes/q20 asks whether it is the name (a code section in reach, a
-         *  read-only data one) or something the far call did. */
-        u32 f0, e0;
-        if (!o.parts.empty() && !standard_flags(o.name, f0, e0)) o.flags |= SHF_WRITE;
+        o.unnamed = o.run.empty();
+        /*  **A section whose name begins `.far` is writable**, code or not - lnk6x takes it for
+         *  far data, like .far and .fardata. q15's and q26's .fartext hold nothing but a
+         *  function and are flags 7, where q26's .midtext and q20's .mycode, code in sections
+         *  just as unknown to it, are 6 and q20's .myconst is 2. */
+        if (!o.parts.empty() && o.name.compare(0, 4, ".far") == 0) o.flags |= SHF_WRITE;
     }
     return true;
 }
@@ -751,7 +761,7 @@ bool Link::allocate()
     for (size_t i = 0; i < outs.size(); i++) {
         /*  A section the command file never names comes after every one it does, whatever
          *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
-        if (outs[i].run.empty()) { unnamed.push_back((int)i); continue; }
+        if (outs[i].unnamed) { unnamed.push_back((int)i); continue; }
         if (outs[i].name == ".cinit" || outs[i].name == ".c6xabi.exidx") { held.push_back((int)i); continue; }
         /*  The reservation is a floor under the parts, not a term added to them: .sysmem is
          *  0x800 with memory.obj's 8 bytes inside it, and lnk6x lays .stack, a tie by name, first. */
@@ -769,8 +779,26 @@ bool Link::allocate()
      *  sections differently, and lnk6x lays them out identically both times. */
     std::stable_sort(rest.begin(), rest.end(), BiggerOut(outs));
     for (size_t i = 0; i < rest.size(); i++) order.push_back(rest[i].second);
+    /*  The sections the file never names go by size among themselves as well: q20's .mycode
+     *  (0x20) is laid before its .myconst (4), though the object has .myconst first. */
+    {
+        std::vector<std::pair<u32, int> > un;
+        for (size_t i = 0; i < unnamed.size(); i++) {
+            u32 want = 0;
+            const OutSec &uo = outs[unnamed[i]];
+            for (size_t p = 0; p < uo.parts.size(); p++) {
+                InSec *c = all[uo.parts[p]];
+                want = align_up(want, c->align) + c->size;
+            }
+            if (want < uo.reserve) want = uo.reserve;
+            un.push_back(std::make_pair(~want, unnamed[i]));
+        }
+        std::stable_sort(un.begin(), un.end(), BiggerOut(outs));
+        for (size_t i = 0; i < un.size(); i++) unnamed[i] = un[i].second;
+    }
     for (size_t i = 0; i < held.size(); i++) order.push_back(held[i]);
     for (size_t i = 0; i < unnamed.size(); i++) order.push_back(unnamed[i]);
+    for (size_t k = 0; k < order.size(); k++) outs[order[k]].rank = (int)k;
 
     for (size_t k = 0; k < order.size(); k++) {
         OutSec &o = outs[order[k]];
@@ -850,23 +878,16 @@ bool Link::allocate()
          *  composed here, once the code it describes has been placed. */
         if (o.name == ".c6xabi.exidx") { if (!compose_exidx(o)) return false; }
         else std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all, mods));
-        /*  **A trampoline follows the input section that called for it** - q15's is at
-         *  0xC0000020, straight after the caller's .text - whatever its size would say. */
+        /*  **Trampolines go at the end of their caller's output section**, after every input
+         *  section of it, in the order they were made: q21's follows .text:small, not the
+         *  .text:caller that called for it, and q24's follows the second object's .text. */
         if (!tramps.empty()) {
-            std::multimap<int, int> after;              /* caller -> its trampolines, in order */
+            std::vector<int> ps;
+            for (size_t p = 0; p < o.parts.size(); p++)
+                if (all[o.parts[p]]->tramp < 0) ps.push_back(o.parts[p]);
             for (size_t t = 0; t < tramps.size(); t++)
-                if (all[tramps[t].in]->out == order[k]) after.insert(std::make_pair(tramps[t].caller, tramps[t].in));
-            if (!after.empty()) {
-                std::vector<int> ps;
-                for (size_t p = 0; p < o.parts.size(); p++) {
-                    if (all[o.parts[p]]->tramp >= 0) continue;
-                    ps.push_back(o.parts[p]);
-                    std::pair<std::multimap<int, int>::iterator, std::multimap<int, int>::iterator> r =
-                        after.equal_range(o.parts[p]);
-                    for (std::multimap<int, int>::iterator t = r.first; t != r.second; ++t) ps.push_back(t->second);
-                }
-                o.parts.swap(ps);
-            }
+                if (all[tramps[t].in]->out == order[k]) ps.push_back(tramps[t].in);
+            o.parts.swap(ps);
         }
         o.addr = at;
         /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
@@ -877,8 +898,7 @@ bool Link::allocate()
         for (size_t p = 0; p < o.parts.size(); p++) {
             InSec *c = all[o.parts[p]];
             bool placed = false;
-            /*  Never into a hole: a trampoline stays behind its caller. Whether lnk6x lets one
-             *  fill a gap is not measured (tests/probes/q22). */
+            /*  Never into a hole: trampolines stay at the section's end, as every probe has them. */
             for (size_t h = 0; h < holes.size() && !placed && c->tramp < 0; h++) {
                 u32 s = align_up(holes[h].first, c->align);
                 if (s + c->size > holes[h].second) continue;
@@ -1060,23 +1080,68 @@ bool Link::sym_addr(int mod, int sym, u32 &a)
 
 /* ------------------------------------------------------------- far-call trampolines */
 
-int Link::tramp_for(u32 target, u32 P) const
+/*  A trampoline is to a place - an input section and an offset - not to an address, which
+ *  moves with every pass of the layout. */
+int Link::tramp_for(int tm, int tsec, u32 toff, u32 P) const
 {
     for (size_t t = 0; t < tramps.size(); t++) {
-        const InSec *c = all[tramps[t].in];
-        if (tramps[t].target == target && c->out >= 0 && pcr_s21_reaches(P, c->addr)) return (int)t;
+        const Tramp &r = tramps[t];
+        const InSec *c = all[r.in];
+        if (r.tmod == tm && r.tsec == tsec && r.toff == toff && c->out >= 0 && pcr_s21_reaches(P, c->addr))
+            return (int)t;
     }
     return -1;
 }
 
-/*  One pass over every PCR_S21 in the placed code, in address order. A branch that reaches
- *  its target, or a trampoline to it, needs nothing; one that reaches neither gets a new
- *  trampoline after its own input section - one per callee per pass, since the next call to
- *  the same callee may well reach this one once it has an address, and the next pass asks. */
+void Link::retarget_tramps()
+{
+    for (size_t t = 0; t < tramps.size(); t++) {
+        Tramp &r = tramps[t];
+        const Module &m = mods[r.tmod];
+        r.target = (r.tsec > 0 && r.tsec < (int)m.secs.size()) ? m.secs[r.tsec].addr + r.toff : r.toff;
+    }
+}
+
+/*  The symbol a relocation names, followed to its definition as sym_addr follows it. */
+void Link::callee_of(int mod, u32 sym, int &tm, int &ts) const
+{
+    tm = mod; ts = (int)sym;
+    const Sym &y = mods[mod].syms[sym];
+    if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
+        std::map<std::string, std::pair<int, int> >::const_iterator d = defined.find(y.name);
+        if (d != defined.end()) { tm = d->second.first; ts = d->second.second; }
+    }
+    resolve_alias(tm, ts);
+}
+
+/*  **lnk6x decides a call as it lays the caller's section out**, so a callee in an output
+ *  section laid later has no address yet and gets a trampoline however near it lands: q20's
+ *  call to .mycode, unnamed and so laid after .text, goes through $Tramp$S$$near, 0x38
+ *  bytes from its target. Whether that is the order of allocation or only a section the file
+ *  never names is asked by tests/probes/q29; this linker takes the order. */
+bool Link::wants_tramp(const InSec *c, u32 P, u32 V, int tm, int ts) const
+{
+    if (!pcr_s21_reaches(P, V)) return true;
+    const Sym &t = mods[tm].syms[ts];
+    if (t.shndx == SHN_UNDEF || t.shndx >= mods[tm].secs.size()) return false;
+    int co = mods[tm].secs[t.shndx].out;
+    if (co < 0 || co == c->out) return false;
+    return outs[co].rank > outs[c->out].rank;
+}
+
+/*  One pass over every PCR_S21 in the placed code. A branch that needs no trampoline, or
+ *  reaches one to its callee, is left; for the rest, one trampoline per callee per pass - the
+ *  next call to the same callee may well reach it once it has an address, and the next pass
+ *  asks. **Made in descending order of their calls' addresses** - q23's for faraway2 (called
+ *  from 0x44) before faralias's (0x0..0x40), q26's for midfunc (0x4) before faraway's (0x0) -
+ *  and **named by the lowest-addressed call's symbol**: q23's shared one is $Tramp$S$$faralias,
+ *  the name only its call at 0x0 used. Whether the order is by a callee's highest call or its
+ *  lowest is asked by tests/probes/q28; this takes the highest. */
 bool Link::trampolines(bool &added)
 {
     added = false;
-    struct Far { u32 P; int in; u32 off; u32 V; u32 sym; };
+    retarget_tramps();
+    struct Far { u32 P; int in; u32 V; u32 sym; int tm, ts; };
     std::vector<Far> far;
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
@@ -1087,47 +1152,52 @@ bool Link::trampolines(bool &added)
             u32 S;
             if (!sym_addr(c->module, rl.sym, S)) return false;
             u32 V = S + (u32)rl.addend, P = c->addr + rl.offset;
-            if (pcr_s21_reaches(P, V) || tramp_for(V, P) >= 0) continue;
-            Far f; f.P = P; f.in = (int)i; f.off = rl.offset; f.V = V; f.sym = rl.sym;
+            Far f; f.P = P; f.in = (int)i; f.V = V; f.sym = rl.sym;
+            callee_of(c->module, rl.sym, f.tm, f.ts);
+            if (!wants_tramp(c, P, V, f.tm, f.ts) ||
+                tramp_for(f.tm, mods[f.tm].syms[f.ts].shndx, mods[f.tm].syms[f.ts].value, P) >= 0) continue;
             far.push_back(f);
         }
     }
     struct ByP { bool operator()(const Far &a, const Far &b) const { return a.P < b.P; } };
     std::stable_sort(far.begin(), far.end(), ByP());
-    std::map<u32, bool> made;
+    /* per callee: the lowest call names it, the highest orders it */
+    std::map<u32, size_t> lowest, highest;
     for (size_t k = 0; k < far.size(); k++) {
-        const Far &f = far[k];
-        if (made[f.V]) continue;
+        if (!lowest.count(far[k].V)) lowest[far[k].V] = k;
+        highest[far[k].V] = k;
+    }
+    for (size_t kk = far.size(); kk-- > 0; ) {
+        if (highest[far[kk].V] != kk) continue;
+        const Far &f = far[lowest[far[kk].V]];
+        const Far &h = far[kk];
         /*  Its own section has one already and still cannot reach it - a caller past 4 MB.
          *  Another would be no nearer: fix_up refuses it by name, and the loop ends. */
         bool own = false;
-        for (size_t t = 0; t < tramps.size() && !own; t++) own = tramps[t].target == f.V && tramps[t].caller == f.in;
+        for (size_t t = 0; t < tramps.size() && !own; t++)
+            own = tramps[t].tmod == f.tm && tramps[t].tsec == (int)mods[f.tm].syms[f.ts].shndx &&
+                  tramps[t].toff == mods[f.tm].syms[f.ts].value && tramps[t].caller == h.in;
         if (own) continue;
-        made[f.V] = true;
-        InSec *caller = all[f.in];
-        const Module &m = mods[caller->module];
+        InSec *caller = all[h.in];
+        const Module &m = mods[all[f.in]->module];
         Tramp t;
         t.target = f.V;
-        /*  Named by the symbol the call was written against: q15's CALLP names `faraway`. */
+        /*  Named by the symbol the call was written against: q15's CALLP names `faraway`,
+         *  q25's a local label, `localfar`. */
         const Sym &y = m.syms[f.sym];
         std::string nm = y.name;
         if (nm.empty() && y.shndx < m.secs.size()) nm = m.secs[y.shndx].name;
         t.name = "$Tramp$S$$" + nm;
-        t.caller = f.in;
-        /*  The map names the callee by its input section and offset,
-         *  `$.fartext:q15-far.obj$0x0`, so that is found here the way sym_addr finds it. */
-        int tm = caller->module, ts = (int)f.sym;
-        if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
-            std::map<std::string, std::pair<int, int> >::iterator d = defined.find(y.name);
-            if (d != defined.end()) { tm = d->second.first; ts = d->second.second; }
-        }
-        resolve_alias(tm, ts);
-        t.tmod = tm; t.tsec = mods[tm].syms[ts].shndx; t.toff = mods[tm].syms[ts].value;
+        t.caller = h.in;
+        /*  The map names the callee by its input section and offset, `$.fartext:q15-far.obj$0x0`. */
+        t.tmod = f.tm; t.tsec = mods[f.tm].syms[f.ts].shndx; t.toff = mods[f.tm].syms[f.ts].value;
         InSec *c = new InSec();
         c->name = t.name; c->type = SHT_PROGBITS; c->flags = SHF_ALLOC | SHF_EXECINSTR;
         c->size = 32; c->align = 32; c->entsize = 0;
         c->data.assign(32, 0);
-        tramp_code(&c->data[0], f.V);
+        tramp_code(&c->data[0], f.V, 0);
+        /*  In the module of the section it follows - q24's in q24-two-b.obj, whose .text is
+         *  the last of .text, though q24-two-a.obj's call is the lower. */
         c->module = caller->module; c->index = -1;
         c->live = true; c->out = caller->out; c->addr = c->load = 0;
         c->tramp = (int)tramps.size();
@@ -1156,9 +1226,10 @@ bool Link::fix_up(bool check_range)
     /*  Every relocation out of range is named before the link stops, not only the first. */
     int bad = 0;
     err.clear();
+    retarget_tramps();
     for (size_t t = 0; t < tramps.size(); t++) {
         tramps[t].calls.clear();
-        tramp_code(&all[tramps[t].in]->data[0], tramps[t].target);
+        tramp_code(&all[tramps[t].in]->data[0], tramps[t].target, all[tramps[t].in]->addr);
     }
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
@@ -1172,11 +1243,16 @@ bool Link::fix_up(bool check_range)
             i32 A = rl.addend;
             if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
             /*  A far call goes to its trampoline instead. */
-            if (rl.type == R_C6000_PCR_S21 && !pcr_s21_reaches(c->addr + rl.offset, S + (u32)A)) {
-                int t = tramp_for(S + (u32)A, c->addr + rl.offset);
+            int ctm, cts;
+            if (rl.type == R_C6000_PCR_S21 && !c->exidx_synth && c->tramp < 0 &&
+                (callee_of(c->module, rl.sym, ctm, cts),
+                 wants_tramp(c, c->addr + rl.offset, S + (u32)A, ctm, cts))) {
+                int t = tramp_for(ctm, mods[ctm].syms[cts].shndx, mods[ctm].syms[cts].value, c->addr + rl.offset);
+                /*  Only a branch out of reach is sent there: q20's call to .mycode made a
+                 *  trampoline and the map lists it, but the CALLP goes straight to `near`. */
                 if (t >= 0) {
                     tramps[t].calls.push_back(std::make_pair((int)i, rl.offset));
-                    S = all[tramps[t].in]->addr; A = 0;
+                    if (!pcr_s21_reaches(c->addr + rl.offset, S + (u32)A)) { S = all[tramps[t].in]->addr; A = 0; }
                 }
             }
             std::string e2; bool range = false;

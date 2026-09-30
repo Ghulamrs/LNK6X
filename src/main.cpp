@@ -81,8 +81,11 @@ void Link::write_map()
             fprintf(f, "$%s:%s$0x%x  %s\n", sec.c_str(), tm.name.c_str(), (unsigned)tr.toff, tr.name.c_str());
             for (size_t k = 0; k < tr.calls.size(); k++) {
                 const InSec *c = all[tr.calls[k].first];
-                fprintf(f, "   %08x     %08x     %08x   %s (%s)\n", tr.target, all[tr.in]->addr,
-                        c->addr + tr.calls[k].second, mods[c->module].name.c_str(), c->name.c_str());
+                /* the callee and trampoline addresses on the first call's line only (q23) */
+                if (k == 0) fprintf(f, "   %08x     %08x  ", tr.target, all[tr.in]->addr);
+                else        fprintf(f, "%29s", "");
+                fprintf(f, "   %08x   %s (%s)\n", c->addr + tr.calls[k].second,
+                        mods[c->module].name.c_str(), c->name.c_str());
             }
             ncalls += tr.calls.size();
         }
