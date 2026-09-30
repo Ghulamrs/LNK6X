@@ -797,8 +797,11 @@ bool Link::allocate()
         /*  **lnk6x places a section's contributions in descending size**, not in the order
          *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
          *  whole of the run, and its map is the evidence. A tie goes to the name - see
-         *  BiggerPart, which is where the reading of it is written down. */
-        std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
+         *  BiggerPart, which is where the reading of it is written down. The unwind index
+         *  is the one exception: its order is its functions' addresses, and it is
+         *  composed here, once the code it describes has been placed. */
+        if (o.name == ".c6xabi.exidx") { if (!compose_exidx(o)) return false; }
+        else std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all));
         o.addr = at;
         /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
          *  fills its holes. q07's .const puts two 4-byte strings at 0x905c and 0x9084, in
@@ -843,6 +846,123 @@ bool Link::allocate()
     return true;
 }
 
+/* ------------------------------------------------------------- the unwind index */
+
+/*  **The index is one table the linker composes**, not the objects' sections laid end to
+ *  end - read off lnk6x 7.4.4's fib, whose 58 entries are 34 of the objects' and 24 of the
+ *  linker's own. Each entry is two words: a PREL31 to its function, and either a PREL31 to
+ *  its .c6xabi.extab record, EXIDX_CANTUNWIND, or the unwind instructions themselves with
+ *  the top bit set. lnk6x sorts them by function address - the unwinder finds a PC's entry
+ *  by binary search - gives every run of code with no entry one that says cantunwind, at
+ *  the run's first byte, and folds an entry into the one before it when both carry the
+ *  same word: `__c6xabi_unwind_cpp_pr1` through `_pr4` sit behind `_pr0` under its
+ *  83000207, and the objects' own cantunwind entries vanish into the runs. An entry
+ *  covers the code up to the next entry's function, so the folding changes nothing the
+ *  unwinder reads. The objects' entries were followed by eliminate() already, which is
+ *  what keeps the personality routines and the extab records they name; here they are
+ *  taken apart and their sections leave the image. Run once per allocation pass. */
+namespace {
+struct ExidxEntry {
+    u32  fn;          /* the function's address */
+    bool prel;        /* the second word is a PREL31 to `target`; else `word` as it stands */
+    u32  target, word;
+    bool alone;       /* the only entry of its section - the ones lnk6x folds */
+    bool operator<(const ExidxEntry &o) const { return fn < o.fn; }
+};
+} // namespace
+
+bool Link::compose_exidx(OutSec &o)
+{
+    const int oi = (int)(&o - &outs[0]);
+    if (exidx_input.empty() && exidx_in < 0) exidx_input = o.parts;
+
+    std::vector<ExidxEntry> entries;
+    std::map<std::pair<int, int>, bool> covered;    /* (module, code section) with an entry */
+    for (size_t k = 0; k < exidx_input.size(); k++) {
+        InSec *c = all[exidx_input[k]];
+        c->out = -1;                                /* its bytes go into the composed table */
+        if (c->link) covered[std::make_pair(c->module, (int)c->link)] = true;
+        for (size_t at = 0; at + 8 <= c->data.size(); at += 8) {
+            ExidxEntry e;
+            e.fn = 0; e.prel = false; e.target = 0; e.word = rd32(&c->data[at + 4]);
+            e.alone = (c->data.size() == 8);
+            bool has_fn = false;
+            for (size_t r = 0; r < c->relocs.size(); r++) {
+                const Rel &rl = c->relocs[r];
+                /*  Only the PREL31s: an entry also carries an R_C6000_NONE against its
+                 *  personality routine, at offset 0, which is there to be followed by
+                 *  eliminate() and writes nothing. */
+                if ((rl.offset != at && rl.offset != at + 4) || rl.type != R_C6000_PREL31) continue;
+                u32 S;
+                if (!sym_addr(c->module, rl.sym, S)) return false;
+                if (rl.offset == at) { e.fn = S + (u32)rl.addend; has_fn = true; }
+                else { e.prel = true; e.target = S + (u32)rl.addend; }
+            }
+            if (!has_fn) { err = c->name + ": an unwind index entry names no function"; return false; }
+            entries.push_back(e);
+        }
+    }
+
+    /* every placed piece of code, in address order, and a cantunwind for each run without one */
+    std::vector<InSec *> code;
+    for (size_t i = 0; i < outs.size(); i++) {
+        if (!(outs[i].flags & SHF_EXECINSTR) || (int)i == oi) continue;
+        for (size_t p = 0; p < outs[i].parts.size(); p++)
+            if (all[outs[i].parts[p]]->size) code.push_back(all[outs[i].parts[p]]);
+    }
+    struct ByAddr { bool operator()(const InSec *a, const InSec *b) const { return a->addr < b->addr; } };
+    std::stable_sort(code.begin(), code.end(), ByAddr());
+    bool was = true;
+    for (size_t k = 0; k < code.size(); k++) {
+        bool has = covered.find(std::make_pair(code[k]->module, code[k]->index)) != covered.end();
+        if (!has && was) {
+            ExidxEntry e;
+            e.fn = code[k]->addr; e.prel = false; e.target = 0; e.word = EXIDX_CANTUNWIND; e.alone = true;
+            entries.push_back(e);
+        }
+        was = has;
+    }
+    std::stable_sort(entries.begin(), entries.end());
+
+    /*  The same word as the entry before, and not a pointer: one entry serves both. Only
+     *  an entry that is its section's whole index is folded - cpp11 writes one section for
+     *  all of a file's functions, and lnk6x keeps `main`'s entry behind `fib`'s identical
+     *  one where it folds tdeh_cpp_abi.obj's one-entry sections into each other. */
+    std::vector<ExidxEntry> kept;
+    for (size_t k = 0; k < entries.size(); k++) {
+        const ExidxEntry &e = entries[k];
+        if (!kept.empty() && e.alone && !e.prel && !kept.back().prel && e.word == kept.back().word) continue;
+        kept.push_back(e);
+    }
+
+    InSec *c;
+    if (exidx_in < 0) {
+        c = new InSec();
+        c->name = ".c6xabi.exidx"; c->type = SHT_PROGBITS; c->flags = SHF_ALLOC | 0x80;
+        c->align = 4; c->entsize = 8; c->module = lnk_mod; c->index = 0;
+        c->live = true; c->dropped = false; c->exidx_synth = true;
+        all.push_back(c);
+        exidx_in = (int)all.size() - 1;
+    } else c = all[exidx_in];
+    c->out = oi;
+    c->addr = c->load = 0;
+    c->size = 8 * (u32)kept.size();
+    c->data.assign(c->size, 0);
+    c->relocs.clear();
+    for (size_t k = 0; k < kept.size(); k++) {
+        /*  Carried as relocations of the linker's own, so fix_up writes them like any
+         *  others once the table has an address: PREL31 in halfwords, the flag bit kept. */
+        Rel r; r.offset = (u32)(8 * k); r.sym = 0; r.type = R_C6000_PREL31; r.addend = (i32)kept[k].fn;
+        c->relocs.push_back(r);
+        if (kept[k].prel) { r.offset += 4; r.addend = (i32)kept[k].target; c->relocs.push_back(r); }
+        else wr32(&c->data[8 * k + 4], kept[k].word);
+    }
+    o.parts.clear();
+    if (!kept.empty()) o.parts.push_back(exidx_in);
+    if (o.align < 4) o.align = 4;
+    return true;
+}
+
 bool Link::sym_addr(int mod, int sym, u32 &a)
 {
     const Sym &y = mods[mod].syms[sym];
@@ -869,12 +989,14 @@ bool Link::fix_up()
 {
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
-        if (c->data.empty()) continue;
+        if (c->data.empty() || c->out < 0) continue;
         for (size_t r = 0; r < c->relocs.size(); r++) {
             const Rel &rl = c->relocs[r];
             if (rl.offset + 4 > c->data.size()) { err = c->name + ": a relocation falls past its section"; return false; }
-            u32 S;
-            if (!sym_addr(c->module, rl.sym, S)) return false;
+            /*  A relocation of the linker's own - the unwind index it composed - names no
+             *  symbol: its addend is the address itself. */
+            u32 S = 0;
+            if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
             std::string e2;
             if (!apply_reloc(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, e2))
                 { err = c->name + ": " + e2; return false; }

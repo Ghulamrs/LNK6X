@@ -47,7 +47,12 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
         c.addr    = 0;
         c.load    = 0;
         u32 off = rd32(s + 16);
-        if (c.type == SHT_PROGBITS && c.size) {
+        /*  **Every section with bytes is loaded, not only PROGBITS.** `.c6xabi.exidx` is
+         *  SHT_C6000_UNWIND in every object, and loading PROGBITS alone left its data empty:
+         *  fix_up skipped its PREL31s and write_image its bytes, so every unwind index this
+         *  linker ever wrote was zeros and no exception could be caught (the review's A1). */
+        bool table = (c.type == SHT_SYMTAB || c.type == SHT_STRTAB || c.type == SHT_RELA || c.type == SHT_REL);
+        if (c.type != SHT_NOBITS && c.type != SHT_NULL && !table && c.size) {
             if (off + c.size > n) { err = name + ": " + c.name + " runs past the file"; return false; }
             c.data.assign(p + off, p + off + c.size);
         }
