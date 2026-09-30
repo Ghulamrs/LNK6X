@@ -3,31 +3,13 @@
 ; `refused` in place of a count: lnk6x links it, and this linker must refuse it by name.
 ; Re-pinned 2026-09-29: the four runtime probes are laid out as the oracle's now and differ in
 ; the unwind index, the attributes blob and the symbol table, and in nothing that runs.
-q05-model-rom   2876   ; the attributes blob and the symbol table
-q07-lib        26636   ; two words naming the unwind table's end, the index without linker-made entries, attributes, symbols
-q16-ride        2862   ; the attributes blob and the symbol table
-q17-pcr-here   26636   ; as q07
-q17-pcr-moved  26803   ; as q07, linked 0x1234000 higher
-q18-cinit      26714   ; as q07
-; Re-pinned 2026-09-30 with the far-call probes. Two classes, both measured and both left alone
-; because mending either moves every kernel image and the harness, which must stay as master
-; links them (docs/known.md):
-;   S  a section symbol of a subsection is written with its output section's name (.text) where
-;      lnk6x writes the input's (.text:big) - q21 and q23 match exactly with that one change
-;   F  7.4.4 writes an empty section without SHF_ALLOC (.data 1, .cinit 0, .c6xabi.exidx 0x80)
-;      and its own attributes blob (08 08 0a 05 0c 05 for 8.2.2's 08 09 0a 03 0c 03)
-q21-place       592 ; S
-q23-share       611 ; S
-q15-far-744      23 ; F
-q20-flags-744    23 ; F
-q21-place-744   583 ; F and S
-q22-odd-744      23 ; F
-q23-share-744   601 ; F and S
-q24-two-744      23 ; F
-q25-local-744    23 ; F
-q26-ranges-744    5 ; F (.cinit, the one empty section the file does not name)
-q27-reach-fwd-in-744    5 ; F
-q27-reach-fwd-out-744   5 ; F
-q27-reach-margin-744    5 ; F
-q27-reach-back-in-744   5 ; F
-q27-reach-back-out-744  5 ; F
+q05-model-rom   2994   ; the attributes blob and the symbol table
+q07-lib        31161   ; two words naming the unwind table's end, the index without linker-made entries, attributes, symbols
+q16-ride        2997   ; the attributes blob and the symbol table
+q17-pcr-here   31161   ; as q07
+q17-pcr-moved  31324   ; as q07, linked 0x1234000 higher
+q18-cinit      31297   ; as q07
+; Re-pinned 2026-09-30: the runtime probes rose when section symbols took lnk6x's names
+; (.text:_c_int00 for .text) - .strtab is longer and every offset after the first such name
+; moves. Their symbol *set* is nearer lnk6x's (q07: 147 of ours not in lnk6x's image before,
+; 23 after), the bytes cmp counts are not. Every far-call probe, 8.2.2 and 7.4.4, matches.

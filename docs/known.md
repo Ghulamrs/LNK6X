@@ -235,15 +235,16 @@ they compound, so the three are not useful as regression tests until the first f
       * **Naming (q23, q25, q26)**: `$Tramp$S$$` and the symbol of the lowest-addressed call to
         that place - q23's is `$Tramp$S$$faralias`, the name only its call at 0x0 used; a local
         label's name (q25, whose relocation does name the label); the same name twice in q26.
-      * **Order (q23, q26, q27)**: several in one section go in descending order of their calls'
-        addresses - by the highest call or the lowest, which q28 asks.
+      * **Order (q23, q26, q27, q28)**: several in one section go in descending order of each
+        callee's *lowest* call - q28's faraway2 (called at 0x4) before faraway (0x0 and 0x8).
       * **Reach (q27)**: the field's exact reach, no margin - nothing at 0xC03F0000 or on the last
         word either way, one each a word or a fetch packet past it.
       * **When a call gets one (q20)**: also when the callee's output section is laid *after*
         the caller's - q20's .text calls .mycode, which no file names and so is laid last, and
         lnk6x makes `$Tramp$S$$near` (the short form) for a callee 0x38 bytes away - yet the
         CALLP itself goes straight to `near`: only a branch out of reach is sent through one.
-        q29 asks whether it is the order of allocation (taken here) or only an unnamed section.
+        q29 settled it as the order of allocation: a callee in a *named* section laid after
+        .text by size gets one too.
 
     **And four things the probes showed that are not about trampolines**, implemented:
 
@@ -258,19 +259,22 @@ they compound, so the three are not useful as regression tests until the first f
       * a map's trampoline table writes the callee and trampoline addresses on a callee's first
         call line only (q23).
 
-    **Two differences left, both measured, both left because mending either moves every kernel
-    image and the harness** (tests/known-differ.txt, classes S and F):
+    **Two differences the probes found, mended 2026-09-30 after measuring them against the 20
+    kernel images lnk6x 7.4.4 made (~/c6747-review-2026-09-29/ti55)** - every loaded section
+    identical to TI's before and after, and the symbol table nearer:
 
-      * S: lnk6x names a subsection's section symbol by the input (`.text:big`), this linker by the
-        output section (`.text`). With that one change q21, q23 and their 7.4.4 twins match
-        exactly - it is `str.add(type == STT_SECTION ? outs[c.out].name : y.name)` in image.cpp -
-        but every runtime image's symbol table moves with it.
-      * F: 7.4.4 writes an empty section without SHF_ALLOC (.data 1, .cinit 0, .c6xabi.exidx 0x80)
-        and its own attributes blob (`08 08 0a 05 0c 05` where 8.2.2 has `08 09 0a 03 0c 03`). That
-        is every 7.4.4 twin's whole difference but for S.
-
-    **Still asked of lnk6x**: q28 (the order by highest or lowest call) and q29 (allocation
-    order or unnamed section), both linked by 8.2.2 and 7.4.4 - `sh tests/probes.sh`.
+      * **A section symbol keeps its input section's name** - `.text:big`, `.text:_c_int00` -
+        where this linker wrote the output section's `.text`. q21 and q23 match with it. In the
+        kernels the symbols of ours not in TI's image fall from ~205 to 2 or 3 each, and those
+        of TI's not in ours from ~1,660 to ~1,450 (the rest are DWARF and the index's). Its
+        .strtab grows by ~6 kB, all names TI's image also has, so the bytes cmp counts in the
+        runtime probes rose: tests/known-differ.txt says so.
+      * **Under --cgt=7.4.4, an empty section is written without SHF_ALLOC** (.data 1, .rodata
+        and .cinit 0, .c6xabi.exidx 0x80, and so at offset 0), **and the linker's attributes
+        are 7.4.4's** (`08 08 0a 05 0c 05` for 8.2.2's `08 09 0a 03 0c 03`). Every 7.4.4 probe
+        matches with it, and no kernel image has a section whose flags differ from TI's any more
+        (3 to 5 each before). The kernels' attributes blob still differs - TI's is the merge of
+        the runtime objects' own, which this linker does not compose.
 
 ## Not implemented
 

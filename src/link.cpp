@@ -1117,8 +1117,8 @@ void Link::callee_of(int mod, u32 sym, int &tm, int &ts) const
 /*  **lnk6x decides a call as it lays the caller's section out**, so a callee in an output
  *  section laid later has no address yet and gets a trampoline however near it lands: q20's
  *  call to .mycode, unnamed and so laid after .text, goes through $Tramp$S$$near, 0x38
- *  bytes from its target. Whether that is the order of allocation or only a section the file
- *  never names is asked by tests/probes/q29; this linker takes the order. */
+ *  bytes from its target - and q29's to a *named* section laid after .text by size, so it is
+ *  the order of allocation. */
 bool Link::wants_tramp(const InSec *c, u32 P, u32 V, int tm, int ts) const
 {
     if (!pcr_s21_reaches(P, V)) return true;
@@ -1132,11 +1132,9 @@ bool Link::wants_tramp(const InSec *c, u32 P, u32 V, int tm, int ts) const
 /*  One pass over every PCR_S21 in the placed code. A branch that needs no trampoline, or
  *  reaches one to its callee, is left; for the rest, one trampoline per callee per pass - the
  *  next call to the same callee may well reach it once it has an address, and the next pass
- *  asks. **Made in descending order of their calls' addresses** - q23's for faraway2 (called
- *  from 0x44) before faralias's (0x0..0x40), q26's for midfunc (0x4) before faraway's (0x0) -
- *  and **named by the lowest-addressed call's symbol**: q23's shared one is $Tramp$S$$faralias,
- *  the name only its call at 0x0 used. Whether the order is by a callee's highest call or its
- *  lowest is asked by tests/probes/q28; this takes the highest. */
+ *  asks. **Made in descending order of each callee's lowest call** and **named by that call's
+ *  symbol**: q28's faraway2 (called at 0x4) goes before faraway (0x0 and 0x8), and q23's
+ *  shared one is $Tramp$S$$faralias, the name only its call at 0x0 used. */
 bool Link::trampolines(bool &added)
 {
     added = false;
@@ -1161,16 +1159,16 @@ bool Link::trampolines(bool &added)
     }
     struct ByP { bool operator()(const Far &a, const Far &b) const { return a.P < b.P; } };
     std::stable_sort(far.begin(), far.end(), ByP());
-    /* per callee: the lowest call names it, the highest orders it */
+    /* per callee: the lowest call names and orders it; the highest is the caller it follows */
     std::map<u32, size_t> lowest, highest;
     for (size_t k = 0; k < far.size(); k++) {
         if (!lowest.count(far[k].V)) lowest[far[k].V] = k;
         highest[far[k].V] = k;
     }
     for (size_t kk = far.size(); kk-- > 0; ) {
-        if (highest[far[kk].V] != kk) continue;
-        const Far &f = far[lowest[far[kk].V]];
-        const Far &h = far[kk];
+        if (lowest[far[kk].V] != kk) continue;
+        const Far &f = far[kk];
+        const Far &h = far[highest[far[kk].V]];
         /*  Its own section has one already and still cannot reach it - a caller past 4 MB.
          *  Another would be no nearer: fix_up refuses it by name, and the loop ends. */
         bool own = false;

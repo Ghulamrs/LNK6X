@@ -64,6 +64,19 @@ bool Link::write_image()
 {
     const u32 nout = (u32)outs.size();
 
+    /*  **7.4.4 writes an empty section without SHF_ALLOC** - .data 1, .rodata and .cinit 0,
+     *  .c6xabi.exidx 0x80 - and so at file offset 0, where 8.2.2 keeps the flags (every q-probe
+     *  linked by both). And its attributes blob says `08 08 0a 05 0c 05` where 8.2.2's says
+     *  `08 09 0a 03 0c 03`: the linker's own tags, not the objects'. */
+    u8 attr[sizeof attributes];
+    memcpy(attr, attributes, sizeof attributes);
+    if (opt.cgt744) {
+        static const u8 v744[6] = { 0x08, 0x08, 0x0A, 0x05, 0x0C, 0x05 };
+        memcpy(attr + 21, v744, 6);
+        for (u32 i = 0; i < nout; i++)
+            if (!outs[i].size && outs[i].parts.empty() && !outs[i].reserve) outs[i].flags &= ~(u32)SHF_ALLOC;
+    }
+
     /*  File offsets. Allocated sections are laid down in address order, not in the order the
      *  section table lists them - q03's .bss is at a lower address than its .text and takes a
      *  lower offset, though the command file names .text first. A section with no address of
@@ -149,7 +162,10 @@ bool Link::write_image()
                 if (y.shndx >= m.secs.size()) continue;
                 InSec &c = m.secs[y.shndx];
                 if (!c.live || c.out < 0) continue;
-                o.name = str.add(type == STT_SECTION ? outs[c.out].name : y.name);
+                /*  **A section symbol keeps its input section's name**: lnk6x writes
+                 *  `.text:big` at q21's .text:big, and `.text:_c_int00` in every runtime image,
+                 *  where this linker wrote the output section's `.text` for all of them. */
+                o.name = str.add(y.name);
                 o.value = c.addr + y.value;
                 o.shndx = (u16)(c.out + 1);
             }
@@ -332,7 +348,7 @@ bool Link::write_image()
         if (at + c->data.size() > f.size()) { err = "a section lands past the end of the file"; return false; }
         memcpy(&f[at], &c->data[0], c->data.size());
     }
-    memcpy(&f[attr_off], attributes, sizeof attributes);
+    memcpy(&f[attr_off], attr, sizeof attr);
     memcpy(&f[tif_off], ti_section_flags, sizeof ti_section_flags);
     memcpy(&f[str_off], str.s.data(), str.s.size());
     memcpy(&f[shstr_off], shstr.s.data(), shstr.s.size());
