@@ -26,7 +26,9 @@ bool Link::run()
     if (!eliminate())      return false;
     if (!build_sections()) return false;
     if (!allocate())       return false;
-    if (!fix_up())         return false;
+    /*  Under --rom_model this first pass is provisional - .cinit is not laid yet - so a
+     *  field out of range here is not yet a refusal; the pass that writes the image checks. */
+    if (!fix_up(!opt.rom_model)) return false;
     /*  **--rom_model runs the middle of the link twice, and it has to.** A load image is
      *  the section's bytes *after* relocation - .fardata is full of pointers - so the
      *  images cannot be made until fix_up has run; but .cinit's size moves everything
@@ -39,7 +41,7 @@ bool Link::run()
             if (!allocate()) return false;
             if (!fix_up())   return false;
             place_cinit();
-        }
+        } else if (!fix_up()) return false;       /* nothing moved: the same words, checked */
     }
     if (!opt.map.empty()) write_map();
     return write_image();
@@ -88,6 +90,8 @@ int main(int argc, char **argv)
         if (starts(a, "--heap_size="))      { lk.opt.heap_size = strtol(a.c_str() + 12, 0, 0); continue; }
         if (a == "-stack" && i + 1 < argc)  { lk.opt.stack_size = strtol(argv[++i], 0, 0); continue; }
         if (a == "-heap" && i + 1 < argc)   { lk.opt.heap_size = strtol(argv[++i], 0, 0); continue; }
+        if (a == "--cgt=7.4.4")             { lk.opt.cgt744 = true;  continue; }
+        if (a == "--cgt=8.2.2")             { lk.opt.cgt744 = false; continue; }
         if (starts(a, "-mv") || starts(a, "--abi=") || a == "-c" || a == "-cr"
             || a == "--no_compress" || starts(a, "--diag")) continue;
         if (a == "-l" && i + 1 < argc)      { lk.opt.inputs.push_back(argv[++i]); continue; }

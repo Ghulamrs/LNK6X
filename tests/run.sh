@@ -49,6 +49,17 @@ one() {
     if [ -n "$missing" ]; then
         printf '%-20s SKIP  missing:%s\n' "$name" "$missing"; skip=$((skip+1)); return
     fi
+    # `refused` in known-differ.txt: lnk6x makes this image and this linker must say it cannot
+    # (q15, the far call, until trampolines land). Linking it anyway is a failure.
+    if [ "$(known_bytes "$name")" = refused ]; then
+        if "$LNK" "tests/cmd/$cmdf" $args $fl -o "$OUT/$name.out" > "$OUT/$name.log" 2>&1; then
+            printf '%-20s FAIL  linked, and is listed as refused - take it off tests/known-differ.txt\n' "$name"
+            fail=$((fail+1))
+        else
+            printf '%-20s KNOWN refused: %s\n' "$name" "$(head -c 100 "$OUT/$name.log")"; known=$((known+1))
+        fi
+        return
+    fi
     if ! "$LNK" "tests/cmd/$cmdf" $args $fl -o "$OUT/$name.out" > "$OUT/$name.log" 2>&1; then
         printf '%-20s FAIL  %s\n' "$name" "$(head -1 "$OUT/$name.log")"; fail=$((fail+1)); return
     fi

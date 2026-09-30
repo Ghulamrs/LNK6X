@@ -21,7 +21,100 @@ static void field(u8 *p, u32 value, int lsb, int bits)
     wr32(p, (w & ~mask) | ((value << lsb) & mask));
 }
 
-bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err)
+const char *reloc_name(u32 type)
+{
+    switch (type) {
+    case R_C6000_NONE:    return "R_C6000_NONE";
+    case R_C6000_ABS32:   return "R_C6000_ABS32";
+    case R_C6000_ABS16:   return "R_C6000_ABS16";
+    case R_C6000_ABS8:    return "R_C6000_ABS8";
+    case R_C6000_PCR_S21: return "R_C6000_PCR_S21";
+    case R_C6000_PCR_S12: return "R_C6000_PCR_S12";
+    case R_C6000_PCR_S10: return "R_C6000_PCR_S10";
+    case R_C6000_PCR_S7:  return "R_C6000_PCR_S7";
+    case R_C6000_ABS_S16: return "R_C6000_ABS_S16";
+    case R_C6000_ABS_L16: return "R_C6000_ABS_L16";
+    case R_C6000_ABS_H16: return "R_C6000_ABS_H16";
+    case R_C6000_PREL31:  return "R_C6000_PREL31";
+    case R_C6000_EHTYPE:  return "R_C6000_EHTYPE";
+    case R_C6000_PCR_H16: return "R_C6000_PCR_H16";
+    case R_C6000_PCR_L16: return "R_C6000_PCR_L16";
+    default:              return 0;
+    }
+}
+
+u32 reloc_width(u32 type)
+{
+    switch (type) {
+    case R_C6000_NONE:  return 0;
+    case R_C6000_ABS16: return 2;
+    case R_C6000_ABS8:  return 1;
+    default:            return 4;
+    }
+}
+
+/*  **A bounded field is checked before it is written** (the review's L-A5): `field()` masks,
+ *  so a value that does not fit used to land as its low bits - a branch 16 MB away became a
+ *  branch somewhere else, rc 0. The ranges are the C6000 ELF ABI's: a PC-relative field is
+ *  signed and counts words from the fetch packet, so the byte distance must be a multiple of
+ *  four; ABS_S16 feeds MVK, which sign-extends; ABS16 and ABS8 are data and take either a
+ *  signed or an unsigned value of their width. */
+static bool check_range(u32 type, u32 P, u32 V, std::string &err)
+{
+    int bits = 0; bool pcr = false; i64 lo = 0, hi = 0;
+    switch (type) {
+    case R_C6000_PCR_S21: bits = 21; pcr = true; break;
+    case R_C6000_PCR_S12: bits = 12; pcr = true; break;
+    case R_C6000_PCR_S10: bits = 10; pcr = true; break;
+    case R_C6000_PCR_S7:  bits = 7;  pcr = true; break;
+    case R_C6000_ABS_S16: lo = -0x8000; hi = 0x7FFF; break;
+    case R_C6000_ABS16:   lo = -0x8000; hi = 0xFFFF; break;
+    case R_C6000_ABS8:    lo = -0x80;   hi = 0xFF;   break;
+    default: return true;
+    }
+    char b[200];
+    if (pcr) {
+        i32 d = (i32)(V - (P & ~0x1Fu));
+        lo = -((i64)1 << (bits - 1)); hi = ((i64)1 << (bits - 1)) - 1;
+        if (d & 3) {
+            snprintf(b, sizeof b, "the displacement %+d bytes from the fetch packet at 0x%08x is not "
+                     "a whole number of words", (int)d, (unsigned)(P & ~0x1Fu));
+            err = b; return false;
+        }
+        i32 w = d >> 2;
+        if (w < lo || w > hi) {
+            snprintf(b, sizeof b, "the displacement %+d words (%+d bytes) from the fetch packet at "
+                     "0x%08x does not fit a signed %d-bit field (%lld..%lld words)",
+                     (int)w, (int)d, (unsigned)(P & ~0x1Fu), bits, (long long)lo, (long long)hi);
+            err = b; return false;
+        }
+        return true;
+    }
+    i64 v = (i32)V;
+    if (v < lo || v > hi) {
+        snprintf(b, sizeof b, "the value 0x%08x (%lld) does not fit the field (%lld..%lld)",
+                 (unsigned)V, (long long)v, (long long)lo, (long long)hi);
+        err = b; return false;
+    }
+    return true;
+}
+
+static bool apply(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err);
+
+bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err, bool &range)
+{
+    range = false;
+    if (!check_range(type, P, S + (u32)A, err)) { range = true; return false; }
+    return apply(type, p, P, S, A, B, err);
+}
+
+void apply_reloc_unchecked(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B)
+{
+    std::string err;
+    apply(type, p, P, S, A, B, err);
+}
+
+static bool apply(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err)
 {
     u32 V = S + (u32)A;
     switch (type) {
@@ -63,17 +156,9 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err)
         break;
     }
     default: {
-        /*  Name it. `relocation type 30 is not handled` sent a reader to the ABI to find out
-         *  which one that was; these four are the ones the runtime and the C++ unwind tables
-         *  bring, and what each computes is still unread (docs/known.md). */
-        const char *nm = 0;
-        switch (type) {
-        case R_C6000_EHTYPE:  nm = "EHTYPE";  break;
-
-        default: break;
-        }
+        const char *nm = reloc_name(type);
         char b[96];
-        if (nm) snprintf(b, sizeof b, "relocation R_C6000_%s (%u) is not handled", nm, type);
+        if (nm) snprintf(b, sizeof b, "relocation %s (%u) is not handled", nm, type);
         else    snprintf(b, sizeof b, "relocation type %u is not handled", type);
         err = b; return false;
     }
