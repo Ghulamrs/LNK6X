@@ -199,6 +199,12 @@ bool Link::write_image()
         o.name = str.add(invented[i]);
         o.value = 0xFFFFFFFFu; o.size = 0;
         o.info = (STB_GLOBAL << 4) | STT_NOTYPE; o.other = 2; o.shndx = SHN_ABS;
+        /*  Under --args, __c_args__ is the linker's .args section's start rather than -1. */
+        if (cmd.args_size > 0 && lnk_mod >= 0 && !strcmp(invented[i], "__c_args__"))
+            for (size_t si = 1; si < mods[lnk_mod].secs.size(); si++) {
+                const InSec &c = mods[lnk_mod].secs[si];
+                if (c.name == ".args" && c.out >= 0) { o.value = c.addr; o.shndx = (u16)(c.out + 1); }
+            }
         syms.push_back(o);
     }
     for (size_t mi = 0; mi < mods.size(); mi++) {

@@ -158,6 +158,7 @@ struct Cmd {
     std::vector<Range>   mem;
     std::vector<SecSpec> secs;
     u32 stack_size, heap_size;
+    u32 args_size;               /* --args=N: a .args of N bytes, __c_args__ at its start; 0 = none */
     /*  Options written inside the command file. RIDE's kTiLinkCmd puts --rom_model on its
      *  second line, and a linker that reads options only from its command line links RIDE's
      *  programs as --ram_model without saying so (the review's N4). 0 = the file said
@@ -165,7 +166,7 @@ struct Cmd {
     int model;
     std::string entry;
     /*  lnk6x's own defaults, 1 kB each, where neither the line nor the file names a size. */
-    Cmd() : stack_size(0x400), heap_size(0x400), model(0) {}
+    Cmd() : stack_size(0x400), heap_size(0x400), args_size(0), model(0) {}
     bool parse(const std::string &path, std::string &err);
     Range *range(const std::string &name);
 };
@@ -198,9 +199,9 @@ struct Options {
      *  .cinit's alignment and its record table's: 4 against 8 (docs/known.md). */
     bool cgt744 = false;
     bool model_given, entry_given;       /* whether the command line said so itself */
-    long stack_size, heap_size;          /* -1 unless the command line gave one */
+    long stack_size, heap_size, args_size; /* -1 unless the command line gave one */
     Options() : entry("_c_int00"), ram_model(true), rom_model(false), verbose(false),
-                model_given(false), entry_given(false), stack_size(-1), heap_size(-1) {}
+                model_given(false), entry_given(false), stack_size(-1), heap_size(-1), args_size(-1) {}
 };
 
 /* archive.cpp */

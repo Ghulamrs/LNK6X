@@ -335,9 +335,23 @@ void Link::add_linker_symbols()
             bss.size += it->second.first;
         }
         m.secs.push_back(bss);
+        /*  --args=N: lnk6x lays a PROGBITS .args of N zero bytes, writable, aligned 4, with
+         *  __c_args__ at its start for the loader to fill (iop.map, 7.4.4); without the option
+         *  __c_args__ stays the absolute -1 args_main.c reads as "no arguments". */
+        if (cmd.args_size > 0) {
+            InSec args = bss;
+            args.name = ".args"; args.type = SHT_PROGBITS; args.size = cmd.args_size;
+            args.align = 4; args.index = 2; args.data.assign(cmd.args_size, 0);
+            Sym y;
+            y.name = "__c_args__"; y.value = 0; y.size = 0;
+            y.info = (u8)((STB_GLOBAL << 4) | STT_NOTYPE); y.other = 2; y.shndx = 2;
+            m.syms.push_back(y);
+            m.secs.push_back(args);
+        }
     }
     for (int i = 0; always[i]; i++) {
         if (defined.find(always[i]) != defined.end()) continue;   /* an object got there first */
+        if (cmd.args_size > 0 && !strcmp(always[i], "__c_args__")) continue;
         Sym y;
         y.name = always[i]; y.value = 0xFFFFFFFFu;
         y.info = (u8)((STB_GLOBAL << 4) | STT_NOTYPE); y.other = 2; y.shndx = SHN_ABS;
@@ -1387,7 +1401,8 @@ bool Link::compose_cinit()
         OutSec &o = outs[oi];
         if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
         if (o.type != SHT_PROGBITS || o.size == 0) continue;
-        if (o.name == ".cinit") continue;
+        /*  .args is the loader's to fill: 7.4.4 keeps it PROGBITS under --rom_model (iop.map). */
+        if (o.name == ".cinit" || o.name == ".args") continue;
 
         /*  The section's bytes, laid out as they will be at run time. A hole between two
          *  contributions is zero, as it is in the image. */

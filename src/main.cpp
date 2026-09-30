@@ -22,6 +22,7 @@ bool Link::run()
     if (!opt.entry_given && !cmd.entry.empty()) opt.entry = cmd.entry;
     if (opt.stack_size >= 0) cmd.stack_size = (u32)opt.stack_size;
     if (opt.heap_size >= 0)  cmd.heap_size  = (u32)opt.heap_size;
+    if (opt.args_size >= 0)  cmd.args_size  = (u32)opt.args_size;
     if (!read_inputs())    return false;
     if (!eliminate())      return false;
     if (!build_sections()) return false;
@@ -114,6 +115,7 @@ int main(int argc, char **argv)
         if (a == "--verbose" || a == "-v")  { lk.opt.verbose = true; continue; }
         if (starts(a, "--stack_size="))     { lk.opt.stack_size = strtol(a.c_str() + 13, 0, 0); continue; }
         if (starts(a, "--heap_size="))      { lk.opt.heap_size = strtol(a.c_str() + 12, 0, 0); continue; }
+        if (starts(a, "--args="))           { lk.opt.args_size = strtol(a.c_str() + 7, 0, 0); continue; }
         if (a == "-stack" && i + 1 < argc)  { lk.opt.stack_size = strtol(argv[++i], 0, 0); continue; }
         if (a == "-heap" && i + 1 < argc)   { lk.opt.heap_size = strtol(argv[++i], 0, 0); continue; }
         if (a == "--cgt=7.4.4")             { lk.opt.cgt744 = true;  continue; }

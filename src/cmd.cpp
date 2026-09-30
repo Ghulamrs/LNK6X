@@ -132,6 +132,7 @@ bool Cmd::parse(const std::string &path, std::string &err)
             if (v.empty() && lx.peek() == "=") { lx.next(); v = lx.next(); }
             if (k == "--stack_size") stack_size = number(v);
             else if (k == "--heap_size") heap_size = number(v);
+            else if (k == "--args") args_size = number(v);
             else if (k == "--ram_model") model = 1;
             else if (k == "--rom_model") model = 2;
             else if (k == "--entry_point") entry = v.empty() ? lx.next() : v;
