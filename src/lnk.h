@@ -115,6 +115,7 @@ struct InSec {
      *  when it happened to be non-zero - which failed one program and not the next. */
     bool dropped = false;        /* a second copy of a group section: another object had it */
     bool exidx_synth = false;    /* the unwind index the linker composed: its relocations name no symbol */
+    int  tramp = -1;             /* a far-call trampoline the linker wrote: its index in Link::tramps */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */
     u32  load;                   /* load address: the same unless the command file parts them */
@@ -271,6 +272,24 @@ struct Link {
     std::vector<int> exidx_input;                 /* the objects' entries, as build_sections found them */
     int exidx_in = -1;                            /* index into `all` of the composed table */
     bool fix_up(bool check_range = true);   /* false: a provisional pass, fields masked unchecked */
+    /*  **Far-call trampolines**, lnk6x's `$Tramp$S$$callee` (docs/known.md): a PCR_S21 branch
+     *  that cannot reach its target is sent to 32 bytes of code laid right after the calling
+     *  input section, which load the target into B10 and branch there. `layout` is allocate()
+     *  run to a fixed point with them: a pass that adds one moves everything after it, so the
+     *  calls are asked again until no pass adds any. One is made per callee and reused by
+     *  every later call that can reach it. */
+    struct Tramp {
+        u32 target;                      /* the callee's address, as last allocated */
+        std::string name;                /* $Tramp$S$$faraway */
+        int in;                          /* index into `all` of its section */
+        int caller;                      /* index into `all` of the input section it follows */
+        int tmod, tsec; u32 toff;        /* the callee's input section and offset: the map's name */
+        std::vector<std::pair<int, u32> > calls;   /* (index into `all`, offset) sent through it */
+    };
+    std::vector<Tramp> tramps;
+    bool layout();
+    bool trampolines(bool &added);
+    int  tramp_for(u32 target, u32 P) const;     /* index into tramps in reach of P, or -1 */
     bool write_image();
     bool sym_addr(int mod, int sym, u32 &a);
     int  out_index(const std::string &name) const;
@@ -295,6 +314,12 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err, 
 void apply_reloc_unchecked(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B);   /* a provisional pass */
 const char *reloc_name(u32 type);       /* "R_C6000_PCR_S21", or 0 for a number not known here */
 u32 reloc_width(u32 type);              /* the bytes the place occupies: 4, 2 for ABS16, 1 for ABS8 */
+/*  A PCR_S21 branch at P reaches V: a whole number of words from P's fetch packet, and no
+ *  more than 2^20 of them either way. Misaligned is "reaches" here - it is not a question a
+ *  trampoline answers, and apply_reloc refuses it by name. */
+bool pcr_s21_reaches(u32 P, u32 V);
+/*  The 32 bytes of a trampoline to V: lnk6x's eight words, read off q15-far.out. */
+void tramp_code(u8 *p, u32 V);
 
 inline u16 rd16(const u8 *p) { return (u16)(p[0] | (p[1] << 8)); }
 inline u32 rd32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }

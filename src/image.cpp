@@ -156,6 +156,25 @@ bool Link::write_image()
             y.out = (int)syms.size();
             syms.push_back(o);
         }
+        /*  **A trampoline is a local function of the module whose call made it**, after that
+         *  module's own locals, with `other` 0 where theirs is 2: q15's `$Tramp$S$$faraway`
+         *  is symbol 21, straight after .fartext's section symbol. In address order when a
+         *  module has several, which no probe has shown yet (tests/probes/q24). */
+        std::vector<std::pair<u32, int> > mine;
+        for (size_t t = 0; t < tramps.size(); t++) {
+            const InSec *c = all[tramps[t].in];
+            if (c->module == (int)mi && c->out >= 0) mine.push_back(std::make_pair(c->addr, (int)t));
+        }
+        std::sort(mine.begin(), mine.end());
+        for (size_t k = 0; k < mine.size(); k++) {
+            const InSec *c = all[tramps[mine[k].second].in];
+            OutSym o;
+            o.name = str.add(tramps[mine[k].second].name);
+            o.value = c->addr; o.size = 0;
+            o.info = (STB_LOCAL << 4) | STT_FUNC; o.other = 0;
+            o.shndx = (u16)(c->out + 1);
+            syms.push_back(o);
+        }
     }
 
     u32 first_global = (u32)syms.size();

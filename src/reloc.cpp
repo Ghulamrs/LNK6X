@@ -101,6 +101,35 @@ static bool check_range(u32 type, u32 P, u32 V, std::string &err)
 
 static bool apply(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err);
 
+bool pcr_s21_reaches(u32 P, u32 V)
+{
+    i32 d = (i32)(V - (P & ~0x1Fu));
+    if (d & 3) return true;
+    i32 w = d >> 2;
+    return w >= -(1 << 20) && w <= (1 << 20) - 1;
+}
+
+/*  **The trampoline lnk6x writes for a far call**, from q15-far.out (8.2.2), word for word:
+ *
+ *      053c54f7   STW   .D2T2  B10,*B15--[2]     ; in parallel with the MVKL
+ *      0500002a   MVKL  .S2    callee,B10        ; the low half, in bits 7..22
+ *      0500006a   MVKH  .S2    callee,B10        ; the high half
+ *      00280362   B     .S2    B10
+ *      053c52e6   LDW   .D2T2  *++B15[2],B10     ; B10 back, in the branch's delay slots
+ *      00006000   NOP   4
+ *      00000000   NOP
+ *      00000000   NOP
+ *
+ *  B3 is untouched, so a CALLP's return address and a B's lack of one both survive it. */
+void tramp_code(u8 *p, u32 V)
+{
+    static const u32 w[8] = { 0x053c54f7u, 0x0500002au, 0x0500006au, 0x00280362u,
+                              0x053c52e6u, 0x00006000u, 0x00000000u, 0x00000000u };
+    for (int i = 0; i < 8; i++) wr32(p + 4 * i, w[i]);
+    field(p + 4, V & 0xFFFFu, 7, 16);
+    field(p + 8, (V >> 16) & 0xFFFFu, 7, 16);
+}
+
 bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err, bool &range)
 {
     range = false;

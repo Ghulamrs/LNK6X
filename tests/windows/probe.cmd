@@ -27,6 +27,19 @@ call "%~dp0par.cmd" 6 "%~f0" asm > stage.log & type stage.log & findstr /C:"-FAI
 call "%~dp0par.cmd" 6 "%~f0" links > stage.log & type stage.log & findstr /C:"-FAILED" stage.log >nul && set fail=1
 del /q stage.log
 
+rem  The far-call probes again, linked by CCS 5.5's lnk6x 7.4.4 - the kernels' linker, which
+rem  LNK6x's --cgt=7.4.4 follows - into <name>-744.out and .map. links744.txt lists them; a box
+rem  with no CCS 5.5 says NO-CGT744 and skips them rather than failing.
+if "%CG744%"=="" set CG744=C:\ti\ccsv5\tools\compiler\c6000_7.4.4\bin
+if exist "%CG744%\lnk6x.exe" (
+    for /f "usebackq tokens=1,2,3,* delims=|" %%a in ("%PROBES%\links744.txt") do (
+        set objs=
+        for %%o in (%%d) do set objs=!objs! %%o.obj
+        "%CG744%\lnk6x.exe" %MV% %CMDS%\%%b !objs! %%c -o %%a-744.out -m %%a-744.map > %%a-744.lnk 2>&1 || (echo LINK744-FAILED %%a & set fail=1)
+        if exist %%a-744.out dis6x %%a-744.out > %%a-744.out.dis 2>&1
+    )
+) else echo NO-CGT744
+
 rem  q10: an archive of exactly two members, one of them never referenced. TI's own runtime
 rem  answers this too (q07), but not in isolation and not with a marker to look for.
 ar6x -r q10.lib q10-ar-used.obj q10-ar-unused.obj > q10.lib.log 2>&1 || (echo AR-FAILED & set fail=1)

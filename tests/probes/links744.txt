@@ -1,0 +1,15 @@
+; The far-call probes linked a second time by CCS 5.5's lnk6x 7.4.4 (probe.cmd, CG744), into
+; <name>-744.out and .map - the kernels' linker, which --cgt=7.4.4 follows. Same format as links.txt.
+q15-far|far.cmd|--ram_model|q15-far
+q20-flags|flat.cmd|--ram_model|q20-flags
+q21-place|far.cmd|--ram_model|q21-place
+q22-odd|far.cmd|--ram_model|q22-odd
+q23-share|far.cmd|--ram_model|q23-share
+q24-two|far.cmd|--ram_model|q24-two-a q24-two-b
+q25-local|far.cmd|--ram_model|q25-local
+q26-ranges|ranges.cmd|--ram_model|q26-ranges
+q27-reach-fwd-in|reach-fwd-in.cmd|--ram_model|q27-reach
+q27-reach-fwd-out|reach-fwd-out.cmd|--ram_model|q27-reach
+q27-reach-margin|reach-margin.cmd|--ram_model|q27-reach
+q27-reach-back-in|reach-back-in.cmd|--ram_model|q27-reach
+q27-reach-back-out|reach-back-out.cmd|--ram_model|q27-reach
