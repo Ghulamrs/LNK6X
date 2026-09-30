@@ -1057,50 +1057,55 @@ bool Link::fix_up()
 
 namespace {
 
-/*  **lnk6x's escape byte is the smallest value the data does not contain**, which both
- *  oracle images agree on: 0x00 for q05, whose four bytes are 44 33 22 11, and 0x40 for
- *  q18, whose bytes are 0x5A and 0x00 through 0x3F. A byte that never occurs can introduce
- *  a run without ever having to be escaped itself. */
+/*  **lnk6x's escape byte is the least frequent value in the data, the smallest on a tie**
+ *  - which is the smallest absent value whenever one is absent: 0x00 for q05 (44 33 22 11),
+ *  0x40 for q18. The review's probe holds every value 0..255 and 7.4.4 picks 0x0A, the
+ *  smallest of those that occur once. */
 u8 escape_for(const std::vector<u8> &d)
 {
-    bool seen[256];
-    for (int i = 0; i < 256; i++) seen[i] = false;
-    for (size_t i = 0; i < d.size(); i++) seen[d[i]] = true;
-    for (int i = 0; i < 256; i++) if (!seen[i]) return (u8)i;
-    return 0;                         /* every value occurs: no escape is possible */
+    size_t n[256];
+    for (int i = 0; i < 256; i++) n[i] = 0;
+    for (size_t i = 0; i < d.size(); i++) n[d[i]]++;
+    int best = 0;
+    for (int i = 1; i < 256; i++) if (n[i] < n[best]) best = i;
+    return (u8)best;
 }
 
-/*  The rle24 stream `__TI_decompress_rle_core` reads: the escape byte, then bytes that are
- *  not it stored literally and ones that are it introducing a run of (count, value). A
- *  count of zero ends the stream - q05 and q18 both finish that way.
+/*  The rle24 stream `__TI_decompress_rle_core` reads (rts6740 7.4.4, read off dis6x): the
+ *  escape byte, then literals, and the escape introducing a count. A count of 1 to 3 is
+ *  that many copies of the escape itself and no value follows; 4 to 255 is a run of the
+ *  value after it; 0 is the long form - a 16-bit big-endian length, a run of 256 to 65535,
+ *  or, when that is below 256, the top of a 24-bit one with two more bytes - then the
+ *  value. A long length of 0 ends the stream: `E 00 00 00`, four bytes (q18).
  *
  *  A run costs three bytes and saves one per byte beyond that, so four identical bytes are
- *  where it starts to pay; below that literals are shorter. q18 is the evidence such as it
- *  is - sixty-four identical bytes run-encoded, sixty-four varied ones left alone. */
+ *  where it starts to pay; below that literals are shorter (q18, and the review's probe:
+ *  `04 04 00` for four zeros, three zeros left as literals). */
 void rle24_encode(const std::vector<u8> &d, u8 E, std::vector<u8> &out)
 {
     out.push_back(E);
     size_t i = 0;
     while (i < d.size()) {
         size_t j = i;
-        while (j < d.size() && d[j] == d[i] && j - i < 255) j++;
+        while (j < d.size() && d[j] == d[i] && j - i < 0xFFFFFF) j++;
         size_t run = j - i;
-        if (run >= 4) {
-            out.push_back(E);
-            out.push_back((u8)run);
-            out.push_back(d[i]);
-            i = j;
-            continue;
+        const u8 v = d[i];
+        if (v == E && run < 4) {                      /* the escape itself, 1 to 3 times */
+            out.push_back(E); out.push_back((u8)run);
+        } else if (run < 4) {
+            for (size_t k = 0; k < run; k++) out.push_back(v);
+        } else if (run < 256) {
+            out.push_back(E); out.push_back((u8)run); out.push_back(v);
+        } else if (run < 65536) {                     /* 300 x 7 is 0a 00 01 2c 07 */
+            out.push_back(E); out.push_back(0);
+            out.push_back((u8)(run >> 8)); out.push_back((u8)run); out.push_back(v);
+        } else {                                      /* 70,000 x 0 is 0a 00 00 01 11 70 00 */
+            out.push_back(E); out.push_back(0);
+            out.push_back(0); out.push_back((u8)(run >> 16));
+            out.push_back((u8)(run >> 8)); out.push_back((u8)run); out.push_back(v);
         }
-        /*  A literal that happens to equal the escape has to be written as a run of one,
-         *  which is why an escape the data does not contain is worth choosing. */
-        if (d[i] == E) { out.push_back(E); out.push_back(1); out.push_back(d[i]); i++; continue; }
-        out.push_back(d[i]);
-        i++;
+        i = j;
     }
-    /*  **The terminator is the long form with a length of nothing**: the escape and three
-     *  zero bytes, four in all, not two. q18 says so - its first image runs 73 bytes, and
-     *  the index, the escape, one run of three and sixty-four literals account for 69. */
     out.push_back(E);
     out.push_back(0);
     out.push_back(0);
@@ -1133,7 +1138,14 @@ bool Link::compose_cinit()
         }
     const u8 rle_index = zero_outs.empty() ? 0 : 1;
 
-    for (size_t oi = 0; oi < outs.size(); oi++) {
+    /*  **The records go in descending size of the section**, not in output-section order:
+     *  7.4.4's isort puts .fardata (0x320) before .neardata (4), though .neardata is the
+     *  lower, and the Compiler++ harness runs .fardata 0x6F0, .data 0x74, .neardata 0x1C. */
+    std::vector<std::pair<u32, size_t> > by_size;
+    for (size_t oi = 0; oi < outs.size(); oi++) by_size.push_back(std::make_pair(~outs[oi].size, oi));
+    std::stable_sort(by_size.begin(), by_size.end());
+    for (size_t bi = 0; bi < by_size.size(); bi++) {
+        const size_t oi = by_size[bi].second;
         OutSec &o = outs[oi];
         if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
         if (o.type != SHT_PROGBITS || o.size == 0) continue;
