@@ -9,6 +9,8 @@
 #define LNK_H
 
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -203,7 +205,14 @@ struct Archive {
     std::string name;
     std::vector<u8> bytes;
     std::vector<std::pair<std::string, u32> > index;   /* symbol -> the member's offset */
-    std::vector<u32> taken;                            /* members already pulled */
+    /*  The index hashed, each name to its *first* entry - the member the linear walk it
+     *  replaces would have stopped at (the review's C2). */
+    std::unordered_map<std::string, u32> first;
+    std::unordered_set<u32> taken;                     /* members already pulled */
+    const u32 *find(const std::string &sym) const {
+        std::unordered_map<std::string, u32>::const_iterator i = first.find(sym);
+        return i == first.end() ? 0 : &i->second;
+    }
     size_t longnames_at;                               /* the `//` member's data, 0 when none */
     Archive() : longnames_at(0) {}
     bool load(const std::string &path, std::string &err);
@@ -265,6 +274,10 @@ struct Link {
     bool write_image();
     bool sym_addr(int mod, int sym, u32 &a);
     int  out_index(const std::string &name) const;
+    /*  out_index's table, rebuilt when `outs` has grown: a section's name never changes once
+     *  it is pushed, so the count alone says whether the table is current. */
+    mutable std::unordered_map<std::string, int> out_by_name;
+    mutable size_t out_by_name_n = 0;
 };
 
 /* elf.cpp */

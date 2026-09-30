@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 static const u8 attributes[] = {
     0x41, 0x26, 0x00, 0x00, 0x00, 0x54, 0x49, 0x00, 0x01, 0x1F, 0x00, 0x00,
@@ -30,15 +31,21 @@ static const int ninvented = 6;
 
 namespace {
 
+/*  **A string written once is found by hash, not by searching the table** (the review's C1).
+ *  `s.find("\0" + t + "\0")` was a scan of the whole table per symbol - 85% of a 3 s link of
+ *  the Compiler++ harness. A name can only ever match a whole earlier entry, so the first
+ *  offset each name was given is exactly what the scan returned. */
 struct Strtab {
     std::string s;
+    std::unordered_map<std::string, u32> at;
     Strtab() { s.push_back('\0'); }
     u32 add(const std::string &t) {
         if (t.empty()) return 0;
-        size_t at = s.find(std::string("\0", 1) + t + std::string("\0", 1));
-        if (at != std::string::npos) return (u32)(at + 1);
+        std::unordered_map<std::string, u32>::const_iterator i = at.find(t);
+        if (i != at.end()) return i->second;
         u32 r = (u32)s.size();
         s += t; s.push_back('\0');
+        at.emplace(t, r);
         return r;
     }
 };

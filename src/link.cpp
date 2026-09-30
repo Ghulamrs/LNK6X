@@ -223,18 +223,14 @@ bool Link::read_inputs()
             Archive &ar = libs[a];
             for (size_t u = 0; u < want.size(); u++) {
                 if (defined.find(want[u]) != defined.end()) continue;
-                for (size_t k = 0; k < ar.index.size(); k++) {
-                    if (ar.index[k].first != want[u]) continue;
-                    u32 off = ar.index[k].second;
-                    if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) break;
-                    Module m;
-                    if (!ar.member(off, m, err)) return false;
-                    ar.taken.push_back(off);
-                    mods.push_back(m);
-                    if (!take_module((int)mods.size() - 1)) return false;
-                    took = true;
-                    break;
-                }
+                const u32 *hit = ar.find(want[u]);
+                if (!hit || ar.taken.count(*hit)) continue;
+                Module m;
+                if (!ar.member(*hit, m, err)) return false;
+                ar.taken.insert(*hit);
+                mods.push_back(m);
+                if (!take_module((int)mods.size() - 1)) return false;
+                took = true;
             }
         }
         if (!took) break;
@@ -509,16 +505,14 @@ bool Link::pull_symbol(const std::string &name)
 {
     for (size_t a = 0; a < libs.size(); a++) {
         Archive &ar = libs[a];
-        for (size_t k = 0; k < ar.index.size(); k++) {
-            if (ar.index[k].first != name) continue;
-            u32 off = ar.index[k].second;
-            if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) return true;
-            Module m;
-            if (!ar.member(off, m, err)) return false;
-            ar.taken.push_back(off);
-            mods.push_back(m);
-            return take_module((int)mods.size() - 1);
-        }
+        const u32 *hit = ar.find(name);
+        if (!hit) continue;
+        if (ar.taken.count(*hit)) return true;
+        Module m;
+        if (!ar.member(*hit, m, err)) return false;
+        ar.taken.insert(*hit);
+        mods.push_back(m);
+        return take_module((int)mods.size() - 1);
     }
     return true;
 }
@@ -566,8 +560,12 @@ bool Link::follow(std::pair<int, int> at)
 
 int Link::out_index(const std::string &name) const
 {
-    for (size_t i = 0; i < outs.size(); i++) if (outs[i].name == name) return (int)i;
-    return -1;
+    if (out_by_name_n != outs.size()) {
+        for (size_t i = out_by_name_n; i < outs.size(); i++) out_by_name.emplace(outs[i].name, (int)i);
+        out_by_name_n = outs.size();
+    }
+    std::unordered_map<std::string, int>::const_iterator i = out_by_name.find(name);
+    return i == out_by_name.end() ? -1 : i->second;
 }
 
 bool Link::build_sections()

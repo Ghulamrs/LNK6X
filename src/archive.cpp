@@ -57,6 +57,7 @@ bool Archive::load(const std::string &path, std::string &err)
         if (e >= body + isize) { err = path + ": broken symbol index"; return false; }
         index.push_back(std::make_pair(std::string((const char *)&bytes[at], e - at),
                                        be32(&bytes[body + 4 + 4 * i])));
+        first.emplace(index.back().first, index.back().second);
         at = e + 1;
     }
 
