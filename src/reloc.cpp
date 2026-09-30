@@ -21,7 +21,7 @@ static void field(u8 *p, u32 value, int lsb, int bits)
     wr32(p, (w & ~mask) | ((value << lsb) & mask));
 }
 
-bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
+bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err)
 {
     u32 V = S + (u32)A;
     switch (type) {
@@ -53,6 +53,10 @@ bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err)
      *  from the word to its target, shifted right one where ARM's is in bytes, the word's
      *  top bit kept - it is a flag, not a digit. Read off q07's .c6xabi.exidx: 0x7fffd678
      *  at 0xc0009310 is process_unwind at 0xc0004000 only as (S - P) / 2. */
+    /*  **EHTYPE is a catch clause's type_info from the static base**, S + A - B, a plain
+     *  word in .c6xabi.extab - lnk6x 7.4.4 writes fffffd40 for a type_info at 8000a7f4
+     *  with __TI_STATIC_BASE at 8000aab4; the runtime adds DP back. */
+    case R_C6000_EHTYPE:  wr32(p, V - B); break;
     case R_C6000_PREL31: {
         u32 w = rd32(p);
         wr32(p, (w & 0x80000000u) | (((u32)((i32)(V - P) >> 1)) & 0x7FFFFFFFu));

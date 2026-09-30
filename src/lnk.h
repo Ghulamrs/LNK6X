@@ -27,6 +27,7 @@ enum {
     SHT_TI_SYMBOL_ALIAS  = 0x7F000006u
 };
 enum { SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_GROUP = 0x200 };
+enum { EXIDX_CANTUNWIND = 1 };
 enum { PF_X = 1, PF_W = 2, PF_R = 4 };
 enum { STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2 };
 enum { STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2, STT_SECTION = 3, STT_FILE = 4 };
@@ -110,6 +111,7 @@ struct InSec {
      *  take_module read uninitialised memory and skipped the linker's own COMMON symbols
      *  when it happened to be non-zero - which failed one program and not the next. */
     bool dropped = false;        /* a second copy of a group section: another object had it */
+    bool exidx_synth = false;    /* the unwind index the linker composed: its relocations name no symbol */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */
     u32  load;                   /* load address: the same unless the command file parts them */
@@ -248,6 +250,12 @@ struct Link {
     bool zero_root = false;      /* __TI_zero_init was made a root: a .bss or .far needs zeroing */
     int cinit_in;                     /* index into `all` of the synthetic contribution */
     bool allocate();
+    /*  The unwind index, composed from the objects' entries once the code is placed: sorted
+     *  by function address, an EXIDX_CANTUNWIND for every run of code with no entry, and
+     *  entries carrying one word folded into the one before. */
+    bool compose_exidx(OutSec &o);
+    std::vector<int> exidx_input;                 /* the objects' entries, as build_sections found them */
+    int exidx_in = -1;                            /* index into `all` of the composed table */
     bool fix_up();
     bool write_image();
     bool sym_addr(int mod, int sym, u32 &a);
@@ -263,7 +271,7 @@ bool elf_read(const u8 *p, size_t n, const std::string &name, Module &m, std::st
 std::string find_library(const Options &o, const std::string &nm);
 
 /* reloc.cpp */
-bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, std::string &err);
+bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err);
 
 inline u16 rd16(const u8 *p) { return (u16)(p[0] | (p[1] << 8)); }
 inline u32 rd32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }
