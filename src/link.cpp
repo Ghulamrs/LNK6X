@@ -1033,24 +1033,53 @@ bool Link::sym_addr(int mod, int sym, u32 &a)
     return true;
 }
 
-bool Link::fix_up()
+bool Link::fix_up(bool check_range)
 {
+    /*  Every relocation out of range is named before the link stops, not only the first. */
+    int bad = 0;
+    err.clear();
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
         if (c->data.empty() || c->out < 0) continue;
         for (size_t r = 0; r < c->relocs.size(); r++) {
             const Rel &rl = c->relocs[r];
-            if (rl.offset + 4 > c->data.size()) { err = c->name + ": a relocation falls past its section"; return false; }
+            if (rl.offset + reloc_width(rl.type) > c->data.size()) { err = c->name + ": a relocation falls past its section"; return false; }
             /*  A relocation of the linker's own - the unwind index it composed - names no
              *  symbol: its addend is the address itself. */
             u32 S = 0;
             if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
-            std::string e2;
-            if (!apply_reloc(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, static_base, e2))
-                { err = c->name + ": " + e2; return false; }
+            std::string e2; bool range = false;
+            if (!apply_reloc(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, static_base, e2, range)) {
+                if (!range) { err = c->name + ": " + e2; return false; }
+                if (!check_range) {                  /* write it masked; the next pass decides */
+                    apply_reloc_unchecked(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, static_base);
+                    continue;
+                }
+                /*  Named the way lnk6x's own diagnostics name a place: the symbol, the
+                 *  relocation, the object and section and offset, then what did not fit. A
+                 *  far call wants a trampoline, which this linker does not write yet
+                 *  (docs/known.md has lnk6x's). */
+                const Module &m = mods[c->module];
+                std::string who;
+                if (c->exidx_synth) who = "the unwind index";
+                else {
+                    const Sym &y = m.syms[rl.sym];
+                    if (!y.name.empty()) who = "\"" + y.name + "\"";
+                    else if (y.shndx < m.secs.size()) who = "section " + m.secs[y.shndx].name;
+                    else who = "symbol " + std::to_string(rl.sym);
+                }
+                char b[160];
+                snprintf(b, sizeof b, " (0x%08x) at %s(%s)+0x%x, address 0x%08x: ",
+                         S + (u32)rl.addend, m.name.c_str(), c->name.c_str(),
+                         (unsigned)rl.offset, (unsigned)(c->addr + rl.offset));
+                if (!err.empty()) err += "\nlnk6x: ";
+                err += std::string("relocation ") + reloc_name(rl.type) + " to " + who + b + e2;
+                if (rl.type == R_C6000_PCR_S21) err += " - a far call needs a trampoline, which this linker does not write";
+                ++bad;
+            }
         }
     }
-    return true;
+    return bad == 0;
 }
 
 /* ------------------------------------------------------------- .cinit, --rom_model */
@@ -1124,6 +1153,10 @@ bool Link::compose_cinit()
     cinit_recs.clear();
     cinit_handlers.clear();
     std::vector<u8> image;
+    /*  What .cinit is made of before it is laid out: a load image, the handler table
+     *  (out -1) or a zero-fill record. */
+    struct Piece { std::vector<u8> bytes; u32 align; int out; };
+    std::vector<Piece> pieces;
 
     /*  **Uninitialised .bss and .far are zeroed by a record of their own** when the zero
      *  handler was linked: hello's table is `.fardata` rle, then `.far` zero_init, and its
@@ -1162,18 +1195,17 @@ bool Link::compose_cinit()
             memcpy(&d[at], &c->data[0], c->data.size());
         }
 
-        CinitRec r;
-        r.image = (u32)image.size();
-        r.out = (int)oi;
-        cinit_recs.push_back(r);
-
-        image.push_back(rle_index);               /* the handler index, rle24 */
-        rle24_encode(d, escape_for(d), image);
+        Piece pc;
+        pc.out = (int)oi;
+        pc.align = 1;                             /* q18's second image begins at 0x49 */
+        pc.bytes.push_back(rle_index);            /* the handler index, rle24 */
+        rle24_encode(d, escape_for(d), pc.bytes);
+        pieces.push_back(pc);
 
         o.type = SHT_NOBITS;                      /* its bytes live in .cinit now */
         o.progbits = false;
     }
-    if (cinit_recs.empty() && zero_outs.empty()) return true;
+    if (pieces.empty() && zero_outs.empty()) return true;
 
     /*  Both samples list the two the runtime has, rle24 first, whether or not `none` is
      *  used - so the index of rle24 is 0 and the table is two words; __TI_zero_init goes in
@@ -1181,26 +1213,52 @@ bool Link::compose_cinit()
     if (!zero_outs.empty()) cinit_handlers.push_back("__TI_zero_init");
     cinit_handlers.push_back("__TI_decompress_rle24");
     cinit_handlers.push_back("__TI_decompress_none");
-
-    /*  The images are packed with no padding between them - q18's second begins at 0x49,
-     *  which is odd - and only the table is aligned, to four. The records are aligned to
-     *  eight, which is what makes __TI_CINIT_Base land on an eight-byte boundary. */
-    while (image.size() % 4) image.push_back(0);
-    cinit_table_off = (u32)image.size();
-    image.resize(image.size() + 4 * cinit_handlers.size(), 0);
-    /*  The zero-fill records follow the handler table: the handler index, three bytes of
-     *  padding, and the section's size - hello's `.far` is 00 00 00 00 48 01 00 00. */
-    for (size_t z = 0; z < zero_outs.size(); z++) {
-        while (image.size() % 4) image.push_back(0);
-        CinitRec r;
-        r.image = (u32)image.size();
-        r.out = zero_outs[z];
-        cinit_recs.push_back(r);
-        u32 sz = outs[zero_outs[z]].size;
-        image.push_back(0); image.push_back(0); image.push_back(0); image.push_back(0);
-        image.push_back((u8)sz); image.push_back((u8)(sz >> 8)); image.push_back((u8)(sz >> 16)); image.push_back((u8)(sz >> 24));
+    {
+        Piece h;
+        h.out = -1;                               /* the handler table: no record of its own */
+        h.align = 4;
+        h.bytes.resize(4 * cinit_handlers.size(), 0);
+        pieces.push_back(h);
     }
-    while (image.size() % 8) image.push_back(0);
+    /*  A zero-fill record: the handler index, three bytes of padding, and the section's
+     *  size - hello's `.far` is 00 00 00 00 48 01 00 00. */
+    for (size_t z = 0; z < zero_outs.size(); z++) {
+        Piece pc;
+        pc.out = zero_outs[z];
+        pc.align = 4;
+        u32 sz = outs[zero_outs[z]].size;
+        const u8 w[8] = { 0, 0, 0, 0, (u8)sz, (u8)(sz >> 8), (u8)(sz >> 16), (u8)(sz >> 24) };
+        pc.bytes.assign(w, w + 8);
+        pieces.push_back(pc);
+    }
+
+    /*  **Every piece but the record table goes in descending size, the handler table
+     *  among them**, each at its own alignment - and the record table last, at eight.
+     *  7.4.4's isort is `.fardata` image 0x72, a hole of 2, the handler table 0xC, the
+     *  `.neardata` image 0xA, a hole of 2, `.bss` and `.far` zero records, the table: 0xBC,
+     *  where laying the images together and the handler table after them made 0xB8 and
+     *  moved every address after .cinit by 4. The other 7.4.4 maps of the review, the
+     *  harness (0x412, 0x25, 0x21, 0xC, 8) and 8.2.2's q05, q18 and isort (0x37, 0xB,
+     *  0xB, 0xA, 8) all read the same way. A tie keeps the order the pieces were made in.
+     *  The records follow the pieces' order, which is the table 7.4.4 writes. */
+    std::stable_sort(pieces.begin(), pieces.end(),
+                     [](const Piece &x, const Piece &y) { return x.bytes.size() > y.bytes.size(); });
+    for (size_t k = 0; k < pieces.size(); k++) {
+        while (image.size() % pieces[k].align) image.push_back(0);
+        if (pieces[k].out < 0) cinit_table_off = (u32)image.size();
+        else {
+            CinitRec r;
+            r.image = (u32)image.size();
+            r.out = pieces[k].out;
+            cinit_recs.push_back(r);
+        }
+        image.insert(image.end(), pieces[k].bytes.begin(), pieces[k].bytes.end());
+    }
+    /*  **The record table is 8-aligned by 8.2.2 and 4-aligned by 7.4.4**, and so is .cinit
+     *  itself: q05 and q18 (8.2.2) pad the table to eight, 7.4.4's isort puts it at 0x9C.
+     *  The bed's oracle is 8.2.2, so that is the default; --cgt=7.4.4 asks for the other. */
+    const u32 cinit_align = opt.cgt744 ? 4 : 8;
+    while (image.size() % cinit_align) image.push_back(0);
     cinit_recs_off = (u32)image.size();
     image.resize(image.size() + 8 * cinit_recs.size(), 0);
 
@@ -1210,7 +1268,7 @@ bool Link::compose_cinit()
     c->type = SHT_PROGBITS;
     c->flags = SHF_ALLOC;
     c->size = (u32)image.size();
-    c->align = 8;
+    c->align = cinit_align;
     c->entsize = 0;
     c->module = lnk_mod;
     c->index = 0;
@@ -1241,7 +1299,7 @@ bool Link::compose_cinit()
     o.type = SHT_PROGBITS;
     o.flags |= SHF_ALLOC;
     o.pflags |= PF_R;
-    if (o.align < 8) o.align = 8;
+    if (o.align < cinit_align) o.align = cinit_align;
     return true;
 }
 

@@ -71,6 +71,30 @@ else
     printf '%-22s FAIL  %s\n' rom-model-quiet "$(head -1 "$OUT/bad-rommodel.log")"; fail=$((fail+1))
 fi
 
+# A branch out of PCR_S21's reach is refused by name, never truncated (the review's L-A5):
+# lnk6x writes a trampoline, this linker does not yet. q15's CALLP sits at 0xC0000000, so the
+# field holds -0x100000..0xFFFFF words: .fartext at 0xC03FFFE0 is in reach and at 0xC0400000
+# is one fetch packet past it. The boundary pair says the check is neither late nor early.
+far_at() {
+    sed "s/origin = 0xC1000000/origin = $1/" "$CMD/far.cmd" > "$OUT/far-$1.cmd"
+}
+one far-call "R_C6000_PCR_S21 to \"faraway\" (0xc1000000) at q15-far.obj(.text)+0x0" -- \
+    "$CMD/far.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
+# --rom_model relocates twice and only the second pass may refuse; with no .cinit to compose
+# there is no second pass, and the refusal still has to come.
+one far-call-rom "does not fit a signed 21-bit field" -- \
+    "$CMD/far.cmd" --rom_model -o "$OUT/x.out" "$REF/q15-far.obj"
+far_at 0xC0400000
+one far-call-edge "does not fit a signed 21-bit field" -- \
+    "$OUT/far-0xC0400000.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
+far_at 0xC03FFFE0
+if "$LNK" "$OUT/far-0xC03FFFE0.cmd" --ram_model -o "$OUT/near.out" "$REF/q15-far.obj" \
+        > "$OUT/bad-near.log" 2>&1 && [ ! -s "$OUT/bad-near.log" ]; then
+    printf '%-22s ok\n' far-call-in-reach
+else
+    printf '%-22s FAIL  %s\n' far-call-in-reach "$(head -1 "$OUT/bad-near.log")"; fail=$((fail+1))
+fi
+
 echo "---"
 [ "$fail" -eq 0 ] && { echo "bad.sh: every case said what it should"; exit 0; }
 echo "bad.sh: $fail case(s) did not"

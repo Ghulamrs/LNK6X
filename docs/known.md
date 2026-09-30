@@ -97,10 +97,20 @@ they compound, so the three are not useful as regression tests until the first f
     `__TI_CINIT_Base/Limit` and `__TI_Handler_Table_Base/Limit`. This linker says on stderr
     that it composes none of it, rather than writing a ram-model image quietly.
 
-    **The layout, off q05-model-rom and q18-cinit.** `.cinit` holds, in order: every load
-    image; then the handler table, 4-aligned, one 32-bit pointer per decompressor, which
-    `__TI_Handler_Table_Base/Limit` bracket; then padding; then the records, 8-aligned, two
-    words each `{load, run}`, which `__TI_CINIT_Base/Limit` bracket. The initialised section
+    **The layout, off q05-model-rom and q18-cinit, corrected 2026-09-30 off 7.4.4's
+    isort.** `.cinit` holds the load images, the handler table (4-aligned, one 32-bit pointer
+    per decompressor, which `__TI_Handler_Table_Base/Limit` bracket) and the zero-fill
+    records (4-aligned), **all in descending size together**, then the record table, two
+    words each `{load, run}`, which `__TI_CINIT_Base/Limit` bracket, in the order the images
+    and zero records were laid. q05 and q18 never told this from "images first", since
+    their handler table is the smallest piece; isort's `.neardata` image (0xA) is smaller than
+    its handler table (0xC), and 7.4.4 lays the table between the two images - which is why
+    this linker's isort `.cinit` was 0xB8 against 0xBC and everything after it moved by 4. The
+    decoded images were identical before and after; only the addresses moved. Every 7.4.4
+    kernel map, the harness (0x412, 0x25, 0x21, 0xC, 8) and 8.2.2's isort (0x37, 0xB, 0xB,
+    0xA, 8) read the same way. The record table and `.cinit` are 8-aligned by 8.2.2 (q05,
+    q18) and 4-aligned by 7.4.4 (isort's table at +0x9C): the default is 8.2.2, the bed's
+    oracle, and `--cgt=7.4.4` asks for 7.4.4's. The initialised section
     itself becomes SHT_NOBITS at its run address - q05's `.data` is type 8 in the image - so
     its bytes live only in `.cinit`. The first byte of a load image is the handler's index
     into that table. Both samples list two handlers, `__TI_decompress_rle24` at 0 and
@@ -174,15 +184,53 @@ they compound, so the three are not useful as regression tests until the first f
     it with `__TI_UNWIND_TABLE_START/END`, which this linker defines but does not sort behind.
   * **The attributes blob is still a constant** - see above - and q07's is the merge of five
     distinct blobs the runtime's members carry.
-  * **No trampolines.** q15 is the probe: a call 16 MB away gets a 32-byte `$Tramp$S$$name`
-    appended to `.text` and listed in the map. This linker writes the call as it stands, and
-    q15 differs by 906 bytes.
+  * **No trampolines - a far call is refused, not truncated (2026-09-30, the review's L-A5).**
+    Every bounded relocation is checked before its field is written, by the C6000 ELF ABI's
+    rule for it: PCR_S21, S12, S10 and S7 are signed word counts from the fetch packet, so the
+    byte distance must be a multiple of four and fit 21, 12, 10 or 7 bits; ABS_S16 (MVK)
+    is signed 16; ABS16 and ABS8 are data and take a signed or an unsigned value of their
+    width. The L16/H16 halves, ABS32, EHTYPE and PREL31 cannot overflow. Until then `field()`
+    masked, and q15 linked rc 0 with an empty log and a branch to somewhere else. Now:
+
+        lnk6x: relocation R_C6000_PCR_S21 to "faraway" (0xc1000000) at q15-far.obj(.text)+0x0,
+        address 0xc0000000: the displacement +4194304 words (+16777216 bytes) from the fetch
+        packet at 0xc0000000 does not fit a signed 21-bit field (-1048576..1048575 words) - a
+        far call needs a trampoline, which this linker does not write
+
+    every one out of range named before the link stops, exit 1 and no image. q15 is `refused`
+    in tests/known-differ.txt and bad.sh holds it and the boundary either side of it
+    (`.fartext` at 0xC03FFFE0 links, at 0xC0400000 is refused).
+
+    **What lnk6x writes instead, from q15-far.out and .map (8.2.2), for when it is built.** A
+    32-byte input section `$Tramp$S$$faraway` in the caller's own module, laid after the
+    caller's `.text` in the same output section (0xC0000020, and `.text` grows 0x20 to 0x40);
+    the CALLP's PCR_S21 retargeted to it (field 8 words); the map gains a `FAR CALL
+    TRAMPOLINES` table naming the callee as `$.fartext:q15-far.obj$0x0`. Its eight words:
+
+        053c54f7   STW   .D2T2  B10,*B15--[2]       ; p-bit set: in parallel with
+        0500002a   MVKL  .S2    faraway,B10         ; 0x0000 - ABS_L16 of the callee
+        0560806a   MVKH  .S2    faraway,B10         ; 0xC100 - ABS_H16
+        00280362   B     .S2    B10
+        053c52e6   LDW   .D2T2  *++B15[2],B10       ; B10 restored in the branch's delay slots
+        00006000   NOP   4
+        00000000   NOP
+        00000000   NOP
+
+    B3 is the CALLP's own return address and is not touched. What is still unmeasured: where
+    the trampoline goes when the caller's output section has several parts (after all of
+    them, or after the caller's), whether two calls to one callee share one, how the symbol
+    table names it, and the reach it uses to decide (a probe per question).
 
 ## Not implemented
 
 Each is a refusal, not a silent wrong answer: the linker says so and stops.
 
   * PREL31 and EHTYPE - see above. PCR_L16 and PCR_H16 are applied now.
+  * Trampolines: a branch out of reach is refused by name (above).
+  * **A REL ABS16 or ABS8 keeps its addend in place, and it is not read.** `elf.cpp` reads the
+    in-place addend of ABS32, EHTYPE and PREL31 only, so `.half sym+4` in a REL table would
+    be written as `sym`. Nothing in the bed or the runtime has one; noticed while adding the
+    range checks (2026-09-30), and left until a probe shows lnk6x's reading of the field.
   * `START`, `END`, `SIZE`, `LOAD_START` and the other address operators, `GROUP`, `UNION`,
     `PAGE`, `type = COPY|DSECT|NOLOAD`, and expression assignments in a `SECTIONS` entry. The
     input-section list and subsection form are read now; the rest are not.
@@ -259,9 +307,11 @@ oracle's address and size, but for isort's `.cinit` and the index behind it, 8 b
   * two words of `.text`, `_Z16find_et_setup_pr` and `__TI_ut_entry_cmp` loading the unwind
     table's end, which moves with the linker-made EXIDX_CANTUNWIND entries this linker does
     not write - 0x1D0 against 0x170 bytes of index in fib;
-  * `.cinit` is 4-aligned by 7.4.4 and 8-aligned by 8.2.2, which this linker follows; where
-    the 4 bytes land in front of an 8-aligned `.cinit` (isort), it and the index after it sit
-    8 bytes higher and the words that name them follow;
+  * ~~isort's `.cinit` 4 bytes short~~ - **mended 2026-09-30**: the handler table goes among
+    the load images by size (above), and `--cgt=7.4.4` gives `.cinit` and its record table
+    7.4.4's 4-alignment. With it, all twenty kernel images of the review (arith, fib, floats,
+    hash, hello, isort, matmul, sieve, structs, virt at -O1 and -O2) have every loaded
+    section byte-identical to 7.4.4's; without it `.cinit` keeps 8.2.2's alignment of 8;
   * 7.4.4 writes an *empty* `.bss`, `.data`, `.init_array` or `.neardata` with flags 1 (W) and
     an empty `.rodata` with 0, dropping ALLOC; 8.2.2 keeps 3 and 2, as the bed's images show
     and this linker writes;

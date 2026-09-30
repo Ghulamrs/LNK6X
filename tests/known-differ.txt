@@ -1,10 +1,11 @@
 ; Probes the bed lets differ, by at most the bytes given - each difference is in docs/known.md.
 ; run.sh fails a probe that differs by more, and one listed here that matches: take it off then.
+; `refused` in place of a count: lnk6x links it, and this linker must refuse it by name.
 ; Re-pinned 2026-09-29: the four runtime probes are laid out as the oracle's now and differ in
 ; the unwind index, the attributes blob and the symbol table, and in nothing that runs.
 q05-model-rom   2876   ; the attributes blob and the symbol table
 q07-lib        27420   ; two words naming the unwind table's end, the index without linker-made entries, attributes, symbols
-q15-far          906   ; no trampolines
+q15-far        refused ; no trampolines: the far call is refused, not truncated (the review's L-A5)
 q16-ride        3023   ; the attributes blob and the symbol table
 q17-pcr-here   27420   ; as q07
 q17-pcr-moved  27596   ; as q07, linked 0x1234000 higher
