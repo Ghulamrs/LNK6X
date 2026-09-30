@@ -37,7 +37,7 @@ The test is the comparison: each probe is linked again from the objects in `test
 image is held against lnk6x's, byte for byte. A TI image carries no time stamp and no build
 path, so nothing has to be pinned first - the two files either agree or they do not.
 
-Eighteen of the twenty-five agree today, and the seven that link TI's runtime or its .cinit
+Nineteen of the twenty-five agree today, and the six that link TI's runtime or its .cinit
 differ by a pinned count each, in the unwind index, the attributes blob and the symbol table
 (`tests/known-differ.txt`, and docs/known.md for each). The runtime library the bed links is
 checked in under `tests/ref`. One run of
@@ -60,6 +60,8 @@ Both kinds of file are called `.cmd`, which is unfortunate but is what each tool
     q06-near        .neardata, .const, .far: near placement and the static base
     q07-lib         a reference into rts6740_elf_eh.lib: which members come, and what they drag
     q08-runload     load address against run address, TI's own trick and not the PE linker's
+    q15-far         a call 16 MB away: lnk6x's trampoline, byte for byte
+    q20-q27         the trampoline's open questions - placement, sharing, naming, reach
 
 The command files vary one thing each: `flat.cmd` one memory range and no opinions, `split.cmd`
 L2RAM against DDR with an alignment and a fill, `runload.cmd` a section loaded in one place and

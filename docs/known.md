@@ -184,49 +184,105 @@ they compound, so the three are not useful as regression tests until the first f
     it with `__TI_UNWIND_TABLE_START/END`, which this linker defines but does not sort behind.
   * **The attributes blob is still a constant** - see above - and q07's is the merge of five
     distinct blobs the runtime's members carry.
-  * **No trampolines - a far call is refused, not truncated (2026-09-30, the review's L-A5).**
-    Every bounded relocation is checked before its field is written, by the C6000 ELF ABI's
-    rule for it: PCR_S21, S12, S10 and S7 are signed word counts from the fetch packet, so the
-    byte distance must be a multiple of four and fit 21, 12, 10 or 7 bits; ABS_S16 (MVK)
-    is signed 16; ABS16 and ABS8 are data and take a signed or an unsigned value of their
-    width. The L16/H16 halves, ABS32, EHTYPE and PREL31 cannot overflow. Until then `field()`
-    masked, and q15 linked rc 0 with an empty log and a branch to somewhere else. Now:
+  * **Out-of-range fields are refused, not truncated (2026-09-30, the review's L-A5) - and a far
+    PCR_S21 branch gets lnk6x's trampoline instead (2026-09-30).** Every bounded relocation is
+    checked before its field is written, by the C6000 ELF ABI's rule for it: PCR_S21, S12, S10
+    and S7 are signed word counts from the fetch packet, so the byte distance must be a multiple
+    of four and fit 21, 12, 10 or 7 bits; ABS_S16 (MVK) is signed 16; ABS16 and ABS8 are data and
+    take a signed or an unsigned value of their width. The L16/H16 halves, ABS32, EHTYPE and
+    PREL31 cannot overflow. Until then `field()` masked, and q15 linked rc 0 with an empty log
+    and a branch to somewhere else. Every one still out of range is named before the link stops,
+    exit 1 and no image - bad.sh holds a PCR_S12 16 MB long, made from q15's object by one byte.
 
-        lnk6x: relocation R_C6000_PCR_S21 to "faraway" (0xc1000000) at q15-far.obj(.text)+0x0,
-        address 0xc0000000: the displacement +4194304 words (+16777216 bytes) from the fetch
-        packet at 0xc0000000 does not fit a signed 21-bit field (-1048576..1048575 words) - a
-        far call needs a trampoline, which this linker does not write
-
-    every one out of range named before the link stops, exit 1 and no image. q15 is `refused`
-    in tests/known-differ.txt and bad.sh holds it and the boundary either side of it
-    (`.fartext` at 0xC03FFFE0 links, at 0xC0400000 is refused).
-
-    **What lnk6x writes instead, from q15-far.out and .map (8.2.2), for when it is built.** A
-    32-byte input section `$Tramp$S$$faraway` in the caller's own module, laid after the
-    caller's `.text` in the same output section (0xC0000020, and `.text` grows 0x20 to 0x40);
-    the CALLP's PCR_S21 retargeted to it (field 8 words); the map gains a `FAR CALL
-    TRAMPOLINES` table naming the callee as `$.fartext:q15-far.obj$0x0`. Its eight words:
+    **A PCR_S21 (B, CALLP) that cannot reach its target goes through a trampoline**, and q15's
+    image is byte-identical to lnk6x's (8.2.2). What was read off q15-far.out and .map and is
+    implemented: a 32-byte input section `$Tramp$S$$faraway` in the caller's own module, laid
+    at the end of the caller's output section (0xC0000020, `.text` grows 0x20 to 0x40), the branch's PCR_S21 retargeted to it (field 8 words); its symbol a local
+    STT_FUNC with `other` 0, value its address, after its module's own locals (symbol 21 of
+    q15, straight after .fartext's section symbol); and the map's `FAR CALL TRAMPOLINES` table,
+    the callee named by its input section and offset (`$.fartext:q15-far.obj$0x0`). Its eight
+    words (`tramp_code` in reloc.cpp):
 
         053c54f7   STW   .D2T2  B10,*B15--[2]       ; p-bit set: in parallel with
-        0500002a   MVKL  .S2    faraway,B10         ; 0x0000 - ABS_L16 of the callee
-        0560806a   MVKH  .S2    faraway,B10         ; 0xC100 - ABS_H16
+        0500002a   MVKL  .S2    faraway,B10         ; 0x0000 - the low half of the callee
+        0560806a   MVKH  .S2    faraway,B10         ; 0xC100 - the high half
         00280362   B     .S2    B10
         053c52e6   LDW   .D2T2  *++B15[2],B10       ; B10 restored in the branch's delay slots
         00006000   NOP   4
         00000000   NOP
         00000000   NOP
 
-    B3 is the CALLP's own return address and is not touched. What is still unmeasured: where
-    the trampoline goes when the caller's output section has several parts (after all of
-    them, or after the caller's), whether two calls to one callee share one, how the symbol
-    table names it, and the reach it uses to decide (a probe per question).
+    B3 is the CALLP's own return address and is not touched, so a plain `B` works the same way.
+    **The layout runs to a fixed point** (`Link::layout`): allocate, find the calls that want a
+    trampoline and reach none to their callee, make one per callee per pass, allocate again - a
+    trampoline moves what is behind it, and the next call may reach the one just made. None is
+    removed, and a caller whose own is still out of reach (an input section past 4 MB) is
+    refused by name rather than given another, so it ends.
+
+    **What probes q20-q27 settled (lnk6x 8.2.2 and 7.4.4, run 2026-09-30), all implemented:**
+
+      * **Placement (q21, q24)**: at the *end* of the caller's output section, after every input
+        section of it - q21's follows .text:small, not the .text:caller that made it, and q24's
+        follows the second object's .text. Never in a gap. It belongs to the module of the
+        section it follows in the map (q24: q24-two-b.obj) - or of the highest call; q24 cannot
+        tell the two apart.
+      * **Two forms, one size (q20, q27)**: where the trampoline itself reaches the callee it is
+        `B callee; NOP 5` and six zero words (00000010 with the PCR_S21 field, 00008000); the
+        B10 form only where it does not. Both are 32 bytes.
+      * **Sharing (q23, q24)**: one per callee *place* - an input section and an offset - for
+        every call in reach of it, across sections and objects; faraway and faralias at one
+        address share one. Two only where a caller cannot reach the first (q26).
+      * **Naming (q23, q25, q26)**: `$Tramp$S$$` and the symbol of the lowest-addressed call to
+        that place - q23's is `$Tramp$S$$faralias`, the name only its call at 0x0 used; a local
+        label's name (q25, whose relocation does name the label); the same name twice in q26.
+      * **Order (q23, q26, q27, q28)**: several in one section go in descending order of each
+        callee's *lowest* call - q28's faraway2 (called at 0x4) before faraway (0x0 and 0x8).
+      * **Reach (q27)**: the field's exact reach, no margin - nothing at 0xC03F0000 or on the last
+        word either way, one each a word or a fetch packet past it.
+      * **When a call gets one (q20)**: also when the callee's output section is laid *after*
+        the caller's - q20's .text calls .mycode, which no file names and so is laid last, and
+        lnk6x makes `$Tramp$S$$near` (the short form) for a callee 0x38 bytes away - yet the
+        CALLP itself goes straight to `near`: only a branch out of reach is sent through one.
+        q29 settled it as the order of allocation: a callee in a *named* section laid after
+        .text by size gets one too.
+
+    **And four things the probes showed that are not about trampolines**, implemented:
+
+      * a section whose name begins `.far` is writable, code or not (q15 and q26's .fartext are
+        7; q26's .midtext and q20's .mycode are 6, q20's .myconst 2);
+      * of the standard sections the command file does not name, only .fardata (beside a named
+        .far) and .rodata (beside a named .const) are added - q26 and q27 name only code and get
+        nothing else, so no .bss and __TI_STATIC_BASE absolute; and **7.4.4 adds an empty
+        .cinit** as well. Every kernel command file names all sixteen, so nothing moves there;
+      * sections the file never names are laid by size among themselves (q20's .mycode 0x20
+        before .myconst 4), after every named one;
+      * a map's trampoline table writes the callee and trampoline addresses on a callee's first
+        call line only (q23).
+
+    **Two differences the probes found, mended 2026-09-30 after measuring them against the 20
+    kernel images lnk6x 7.4.4 made (~/c6747-review-2026-09-29/ti55)** - every loaded section
+    identical to TI's before and after, and the symbol table nearer:
+
+      * **A section symbol keeps its input section's name** - `.text:big`, `.text:_c_int00` -
+        where this linker wrote the output section's `.text`. q21 and q23 match with it. In the
+        kernels the symbols of ours not in TI's image fall from ~205 to 2 or 3 each, and those
+        of TI's not in ours from ~1,660 to ~1,450 (the rest are DWARF and the index's). Its
+        .strtab grows by ~6 kB, all names TI's image also has, so the bytes cmp counts in the
+        runtime probes rose: tests/known-differ.txt says so.
+      * **Under --cgt=7.4.4, an empty section is written without SHF_ALLOC** (.data 1, .rodata
+        and .cinit 0, .c6xabi.exidx 0x80, and so at offset 0), **and the linker's attributes
+        are 7.4.4's** (`08 08 0a 05 0c 05` for 8.2.2's `08 09 0a 03 0c 03`). Every 7.4.4 probe
+        matches with it, and no kernel image has a section whose flags differ from TI's any more
+        (3 to 5 each before). The kernels' attributes blob still differs - TI's is the merge of
+        the runtime objects' own, which this linker does not compose.
 
 ## Not implemented
 
 Each is a refusal, not a silent wrong answer: the linker says so and stops.
 
   * PREL31 and EHTYPE - see above. PCR_L16 and PCR_H16 are applied now.
-  * Trampolines: a branch out of reach is refused by name (above).
+  * A trampoline for anything but PCR_S21, and one for a caller whose own trampoline would be
+    out of its reach (an input section past 4 MB): both are refused by name (above).
   * **A REL ABS16 or ABS8 keeps its addend in place, and it is not read.** `elf.cpp` reads the
     in-place addend of ABS32, EHTYPE and PREL31 only, so `.half sym+4` in a REL table would
     be written as `sym`. Nothing in the bed or the runtime has one; noticed while adding the

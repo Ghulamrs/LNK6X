@@ -223,18 +223,14 @@ bool Link::read_inputs()
             Archive &ar = libs[a];
             for (size_t u = 0; u < want.size(); u++) {
                 if (defined.find(want[u]) != defined.end()) continue;
-                for (size_t k = 0; k < ar.index.size(); k++) {
-                    if (ar.index[k].first != want[u]) continue;
-                    u32 off = ar.index[k].second;
-                    if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) break;
-                    Module m;
-                    if (!ar.member(off, m, err)) return false;
-                    ar.taken.push_back(off);
-                    mods.push_back(m);
-                    if (!take_module((int)mods.size() - 1)) return false;
-                    took = true;
-                    break;
-                }
+                const u32 *hit = ar.find(want[u]);
+                if (!hit || ar.taken.count(*hit)) continue;
+                Module m;
+                if (!ar.member(*hit, m, err)) return false;
+                ar.taken.insert(*hit);
+                mods.push_back(m);
+                if (!take_module((int)mods.size() - 1)) return false;
+                took = true;
             }
         }
         if (!took) break;
@@ -509,16 +505,14 @@ bool Link::pull_symbol(const std::string &name)
 {
     for (size_t a = 0; a < libs.size(); a++) {
         Archive &ar = libs[a];
-        for (size_t k = 0; k < ar.index.size(); k++) {
-            if (ar.index[k].first != name) continue;
-            u32 off = ar.index[k].second;
-            if (std::find(ar.taken.begin(), ar.taken.end(), off) != ar.taken.end()) return true;
-            Module m;
-            if (!ar.member(off, m, err)) return false;
-            ar.taken.push_back(off);
-            mods.push_back(m);
-            return take_module((int)mods.size() - 1);
-        }
+        const u32 *hit = ar.find(name);
+        if (!hit) continue;
+        if (ar.taken.count(*hit)) return true;
+        Module m;
+        if (!ar.member(*hit, m, err)) return false;
+        ar.taken.insert(*hit);
+        mods.push_back(m);
+        return take_module((int)mods.size() - 1);
     }
     return true;
 }
@@ -566,8 +560,12 @@ bool Link::follow(std::pair<int, int> at)
 
 int Link::out_index(const std::string &name) const
 {
-    for (size_t i = 0; i < outs.size(); i++) if (outs[i].name == name) return (int)i;
-    return -1;
+    if (out_by_name_n != outs.size()) {
+        for (size_t i = out_by_name_n; i < outs.size(); i++) out_by_name.emplace(outs[i].name, (int)i);
+        out_by_name_n = outs.size();
+    }
+    std::unordered_map<std::string, int>::const_iterator i = out_by_name.find(name);
+    return i == out_by_name.end() ? -1 : i->second;
 }
 
 bool Link::build_sections()
@@ -582,8 +580,19 @@ bool Link::build_sections()
         standard_flags(o.name, o.flags, o.entsize);
         outs.push_back(o);
     }
+    /*  **Only two standard sections are added that the command file does not name**: .fardata
+     *  beside a named .far and .rodata beside a named .const, in that order after the named
+     *  ones. q08 and q09 name .far and .const and get both back; q16 (ride.cmd) leaves out the
+     *  unwind sections and does not; q26 and q27 name only their code sections and get
+     *  nothing else at all - no .bss, and __TI_STATIC_BASE absolute. The table's order and
+     *  flags still hold for what is added. */
+    const bool named_far = out_index(".far") >= 0, named_const = out_index(".const") >= 0;
     for (int i = 0; i < nstandard; i++) {
         if (out_index(standard[i].name) >= 0) continue;
+        std::string sn = standard[i].name;
+        /*  7.4.4 adds an empty .cinit as well: q26 and q27, linked by it, have one no file named. */
+        if (!((sn == ".fardata" && named_far) || (sn == ".rodata" && named_const) ||
+              (sn == ".cinit" && opt.cgt744))) continue;
         OutSec o;
         o.name = standard[i].name;
         o.flags = standard[i].flags; o.entsize = standard[i].entsize;
@@ -655,6 +664,12 @@ bool Link::build_sections()
             if (c->flags & SHF_EXECINSTR) o.pflags |= PF_X;
         }
         o.type = o.progbits ? SHT_PROGBITS : SHT_NOBITS;
+        o.unnamed = o.run.empty();
+        /*  **A section whose name begins `.far` is writable**, code or not - lnk6x takes it for
+         *  far data, like .far and .fardata. q15's and q26's .fartext hold nothing but a
+         *  function and are flags 7, where q26's .midtext and q20's .mycode, code in sections
+         *  just as unknown to it, are 6 and q20's .myconst is 2. */
+        if (!o.parts.empty() && o.name.compare(0, 4, ".far") == 0) o.flags |= SHF_WRITE;
     }
     return true;
 }
@@ -746,7 +761,7 @@ bool Link::allocate()
     for (size_t i = 0; i < outs.size(); i++) {
         /*  A section the command file never names comes after every one it does, whatever
          *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
-        if (outs[i].run.empty()) { unnamed.push_back((int)i); continue; }
+        if (outs[i].unnamed) { unnamed.push_back((int)i); continue; }
         if (outs[i].name == ".cinit" || outs[i].name == ".c6xabi.exidx") { held.push_back((int)i); continue; }
         /*  The reservation is a floor under the parts, not a term added to them: .sysmem is
          *  0x800 with memory.obj's 8 bytes inside it, and lnk6x lays .stack, a tie by name, first. */
@@ -764,8 +779,26 @@ bool Link::allocate()
      *  sections differently, and lnk6x lays them out identically both times. */
     std::stable_sort(rest.begin(), rest.end(), BiggerOut(outs));
     for (size_t i = 0; i < rest.size(); i++) order.push_back(rest[i].second);
+    /*  The sections the file never names go by size among themselves as well: q20's .mycode
+     *  (0x20) is laid before its .myconst (4), though the object has .myconst first. */
+    {
+        std::vector<std::pair<u32, int> > un;
+        for (size_t i = 0; i < unnamed.size(); i++) {
+            u32 want = 0;
+            const OutSec &uo = outs[unnamed[i]];
+            for (size_t p = 0; p < uo.parts.size(); p++) {
+                InSec *c = all[uo.parts[p]];
+                want = align_up(want, c->align) + c->size;
+            }
+            if (want < uo.reserve) want = uo.reserve;
+            un.push_back(std::make_pair(~want, unnamed[i]));
+        }
+        std::stable_sort(un.begin(), un.end(), BiggerOut(outs));
+        for (size_t i = 0; i < un.size(); i++) unnamed[i] = un[i].second;
+    }
     for (size_t i = 0; i < held.size(); i++) order.push_back(held[i]);
     for (size_t i = 0; i < unnamed.size(); i++) order.push_back(unnamed[i]);
+    for (size_t k = 0; k < order.size(); k++) outs[order[k]].rank = (int)k;
 
     for (size_t k = 0; k < order.size(); k++) {
         OutSec &o = outs[order[k]];
@@ -845,6 +878,17 @@ bool Link::allocate()
          *  composed here, once the code it describes has been placed. */
         if (o.name == ".c6xabi.exidx") { if (!compose_exidx(o)) return false; }
         else std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all, mods));
+        /*  **Trampolines go at the end of their caller's output section**, after every input
+         *  section of it, in the order they were made: q21's follows .text:small, not the
+         *  .text:caller that called for it, and q24's follows the second object's .text. */
+        if (!tramps.empty()) {
+            std::vector<int> ps;
+            for (size_t p = 0; p < o.parts.size(); p++)
+                if (all[o.parts[p]]->tramp < 0) ps.push_back(o.parts[p]);
+            for (size_t t = 0; t < tramps.size(); t++)
+                if (all[tramps[t].in]->out == order[k]) ps.push_back(tramps[t].in);
+            o.parts.swap(ps);
+        }
         o.addr = at;
         /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
          *  fills its holes. q07's .const puts two 4-byte strings at 0x905c and 0x9084, in
@@ -854,7 +898,8 @@ bool Link::allocate()
         for (size_t p = 0; p < o.parts.size(); p++) {
             InSec *c = all[o.parts[p]];
             bool placed = false;
-            for (size_t h = 0; h < holes.size() && !placed; h++) {
+            /*  Never into a hole: trampolines stay at the section's end, as every probe has them. */
+            for (size_t h = 0; h < holes.size() && !placed && c->tramp < 0; h++) {
                 u32 s = align_up(holes[h].first, c->align);
                 if (s + c->size > holes[h].second) continue;
                 std::pair<u32, u32> was = holes[h];
@@ -1033,11 +1078,157 @@ bool Link::sym_addr(int mod, int sym, u32 &a)
     return true;
 }
 
+/* ------------------------------------------------------------- far-call trampolines */
+
+/*  A trampoline is to a place - an input section and an offset - not to an address, which
+ *  moves with every pass of the layout. */
+int Link::tramp_for(int tm, int tsec, u32 toff, u32 P) const
+{
+    for (size_t t = 0; t < tramps.size(); t++) {
+        const Tramp &r = tramps[t];
+        const InSec *c = all[r.in];
+        if (r.tmod == tm && r.tsec == tsec && r.toff == toff && c->out >= 0 && pcr_s21_reaches(P, c->addr))
+            return (int)t;
+    }
+    return -1;
+}
+
+void Link::retarget_tramps()
+{
+    for (size_t t = 0; t < tramps.size(); t++) {
+        Tramp &r = tramps[t];
+        const Module &m = mods[r.tmod];
+        r.target = (r.tsec > 0 && r.tsec < (int)m.secs.size()) ? m.secs[r.tsec].addr + r.toff : r.toff;
+    }
+}
+
+/*  The symbol a relocation names, followed to its definition as sym_addr follows it. */
+void Link::callee_of(int mod, u32 sym, int &tm, int &ts) const
+{
+    tm = mod; ts = (int)sym;
+    const Sym &y = mods[mod].syms[sym];
+    if ((y.info >> 4) != STB_LOCAL && !y.name.empty()) {
+        std::map<std::string, std::pair<int, int> >::const_iterator d = defined.find(y.name);
+        if (d != defined.end()) { tm = d->second.first; ts = d->second.second; }
+    }
+    resolve_alias(tm, ts);
+}
+
+/*  **lnk6x decides a call as it lays the caller's section out**, so a callee in an output
+ *  section laid later has no address yet and gets a trampoline however near it lands: q20's
+ *  call to .mycode, unnamed and so laid after .text, goes through $Tramp$S$$near, 0x38
+ *  bytes from its target - and q29's to a *named* section laid after .text by size, so it is
+ *  the order of allocation. */
+bool Link::wants_tramp(const InSec *c, u32 P, u32 V, int tm, int ts) const
+{
+    if (!pcr_s21_reaches(P, V)) return true;
+    const Sym &t = mods[tm].syms[ts];
+    if (t.shndx == SHN_UNDEF || t.shndx >= mods[tm].secs.size()) return false;
+    int co = mods[tm].secs[t.shndx].out;
+    if (co < 0 || co == c->out) return false;
+    return outs[co].rank > outs[c->out].rank;
+}
+
+/*  One pass over every PCR_S21 in the placed code. A branch that needs no trampoline, or
+ *  reaches one to its callee, is left; for the rest, one trampoline per callee per pass - the
+ *  next call to the same callee may well reach it once it has an address, and the next pass
+ *  asks. **Made in descending order of each callee's lowest call** and **named by that call's
+ *  symbol**: q28's faraway2 (called at 0x4) goes before faraway (0x0 and 0x8), and q23's
+ *  shared one is $Tramp$S$$faralias, the name only its call at 0x0 used. */
+bool Link::trampolines(bool &added)
+{
+    added = false;
+    retarget_tramps();
+    struct Far { u32 P; int in; u32 V; u32 sym; int tm, ts; };
+    std::vector<Far> far;
+    for (size_t i = 0; i < all.size(); i++) {
+        InSec *c = all[i];
+        if (c->data.empty() || c->out < 0 || c->tramp >= 0 || c->exidx_synth) continue;
+        for (size_t r = 0; r < c->relocs.size(); r++) {
+            const Rel &rl = c->relocs[r];
+            if (rl.type != R_C6000_PCR_S21) continue;
+            u32 S;
+            if (!sym_addr(c->module, rl.sym, S)) return false;
+            u32 V = S + (u32)rl.addend, P = c->addr + rl.offset;
+            Far f; f.P = P; f.in = (int)i; f.V = V; f.sym = rl.sym;
+            callee_of(c->module, rl.sym, f.tm, f.ts);
+            if (!wants_tramp(c, P, V, f.tm, f.ts) ||
+                tramp_for(f.tm, mods[f.tm].syms[f.ts].shndx, mods[f.tm].syms[f.ts].value, P) >= 0) continue;
+            far.push_back(f);
+        }
+    }
+    struct ByP { bool operator()(const Far &a, const Far &b) const { return a.P < b.P; } };
+    std::stable_sort(far.begin(), far.end(), ByP());
+    /* per callee: the lowest call names and orders it; the highest is the caller it follows */
+    std::map<u32, size_t> lowest, highest;
+    for (size_t k = 0; k < far.size(); k++) {
+        if (!lowest.count(far[k].V)) lowest[far[k].V] = k;
+        highest[far[k].V] = k;
+    }
+    for (size_t kk = far.size(); kk-- > 0; ) {
+        if (lowest[far[kk].V] != kk) continue;
+        const Far &f = far[kk];
+        const Far &h = far[highest[far[kk].V]];
+        /*  Its own section has one already and still cannot reach it - a caller past 4 MB.
+         *  Another would be no nearer: fix_up refuses it by name, and the loop ends. */
+        bool own = false;
+        for (size_t t = 0; t < tramps.size() && !own; t++)
+            own = tramps[t].tmod == f.tm && tramps[t].tsec == (int)mods[f.tm].syms[f.ts].shndx &&
+                  tramps[t].toff == mods[f.tm].syms[f.ts].value && tramps[t].caller == h.in;
+        if (own) continue;
+        InSec *caller = all[h.in];
+        const Module &m = mods[all[f.in]->module];
+        Tramp t;
+        t.target = f.V;
+        /*  Named by the symbol the call was written against: q15's CALLP names `faraway`,
+         *  q25's a local label, `localfar`. */
+        const Sym &y = m.syms[f.sym];
+        std::string nm = y.name;
+        if (nm.empty() && y.shndx < m.secs.size()) nm = m.secs[y.shndx].name;
+        t.name = "$Tramp$S$$" + nm;
+        t.caller = h.in;
+        /*  The map names the callee by its input section and offset, `$.fartext:q15-far.obj$0x0`. */
+        t.tmod = f.tm; t.tsec = mods[f.tm].syms[f.ts].shndx; t.toff = mods[f.tm].syms[f.ts].value;
+        InSec *c = new InSec();
+        c->name = t.name; c->type = SHT_PROGBITS; c->flags = SHF_ALLOC | SHF_EXECINSTR;
+        c->size = 32; c->align = 32; c->entsize = 0;
+        c->data.assign(32, 0);
+        tramp_code(&c->data[0], f.V, 0);
+        /*  In the module of the section it follows - q24's in q24-two-b.obj, whose .text is
+         *  the last of .text, though q24-two-a.obj's call is the lower. */
+        c->module = caller->module; c->index = -1;
+        c->live = true; c->out = caller->out; c->addr = c->load = 0;
+        c->tramp = (int)tramps.size();
+        all.push_back(c);
+        t.in = (int)all.size() - 1;
+        outs[caller->out].parts.push_back(t.in);
+        tramps.push_back(t);
+        added = true;
+    }
+    return true;
+}
+
+bool Link::layout()
+{
+    if (!allocate()) return false;
+    for (;;) {
+        bool added = false;
+        if (!trampolines(added)) return false;
+        if (!added) return true;
+        if (!allocate()) return false;
+    }
+}
+
 bool Link::fix_up(bool check_range)
 {
     /*  Every relocation out of range is named before the link stops, not only the first. */
     int bad = 0;
     err.clear();
+    retarget_tramps();
+    for (size_t t = 0; t < tramps.size(); t++) {
+        tramps[t].calls.clear();
+        tramp_code(&all[tramps[t].in]->data[0], tramps[t].target, all[tramps[t].in]->addr);
+    }
     for (size_t i = 0; i < all.size(); i++) {
         InSec *c = all[i];
         if (c->data.empty() || c->out < 0) continue;
@@ -1047,12 +1238,26 @@ bool Link::fix_up(bool check_range)
             /*  A relocation of the linker's own - the unwind index it composed - names no
              *  symbol: its addend is the address itself. */
             u32 S = 0;
+            i32 A = rl.addend;
             if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
+            /*  A far call goes to its trampoline instead. */
+            int ctm, cts;
+            if (rl.type == R_C6000_PCR_S21 && !c->exidx_synth && c->tramp < 0 &&
+                (callee_of(c->module, rl.sym, ctm, cts),
+                 wants_tramp(c, c->addr + rl.offset, S + (u32)A, ctm, cts))) {
+                int t = tramp_for(ctm, mods[ctm].syms[cts].shndx, mods[ctm].syms[cts].value, c->addr + rl.offset);
+                /*  Only a branch out of reach is sent there: q20's call to .mycode made a
+                 *  trampoline and the map lists it, but the CALLP goes straight to `near`. */
+                if (t >= 0) {
+                    tramps[t].calls.push_back(std::make_pair((int)i, rl.offset));
+                    if (!pcr_s21_reaches(c->addr + rl.offset, S + (u32)A)) { S = all[tramps[t].in]->addr; A = 0; }
+                }
+            }
             std::string e2; bool range = false;
-            if (!apply_reloc(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, static_base, e2, range)) {
+            if (!apply_reloc(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, A, static_base, e2, range)) {
                 if (!range) { err = c->name + ": " + e2; return false; }
                 if (!check_range) {                  /* write it masked; the next pass decides */
-                    apply_reloc_unchecked(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, rl.addend, static_base);
+                    apply_reloc_unchecked(rl.type, &c->data[rl.offset], c->addr + rl.offset, S, A, static_base);
                     continue;
                 }
                 /*  Named the way lnk6x's own diagnostics name a place: the symbol, the
@@ -1070,11 +1275,11 @@ bool Link::fix_up(bool check_range)
                 }
                 char b[160];
                 snprintf(b, sizeof b, " (0x%08x) at %s(%s)+0x%x, address 0x%08x: ",
-                         S + (u32)rl.addend, m.name.c_str(), c->name.c_str(),
+                         S + (u32)A, m.name.c_str(), c->name.c_str(),
                          (unsigned)rl.offset, (unsigned)(c->addr + rl.offset));
                 if (!err.empty()) err += "\nlnk6x: ";
                 err += std::string("relocation ") + reloc_name(rl.type) + " to " + who + b + e2;
-                if (rl.type == R_C6000_PCR_S21) err += " - a far call needs a trampoline, which this linker does not write";
+                if (rl.type == R_C6000_PCR_S21) err += " - and its trampoline is out of reach too";
                 ++bad;
             }
         }

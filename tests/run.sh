@@ -89,6 +89,10 @@ one() {
 sed 's/;.*//' tests/probes/links.txt | grep '|' > "$OUT/links"
 # q10 is not in links.txt: probe.cmd builds its archive first, so it names its own link
 echo "q10-ar|flat.cmd|--ram_model q10.lib|q10-ar-main" >> "$OUT/links"
+# links744.txt: the far-call probes as CCS 5.5's lnk6x 7.4.4 linked them (<name>-744), held to
+# this linker's --cgt=7.4.4
+sed 's/;.*//' tests/probes/links744.txt | grep '|' |
+    awk -F'|' '{ printf "%s-744|%s|%s --cgt=7.4.4|%s\n", $1, $2, $3, $4 }' >> "$OUT/links"
 
 while IFS='|' read -r n c f o; do
     [ -n "$n" ] && one "$n" "$c" "$f" "$o"

@@ -51,3 +51,19 @@ q18-cinit|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q18-cinit
 ; allocation order can be read rather than inferred from q07.
 q19-order-flat|flat.cmd|--ram_model|q19-order
 q19-order-named|order.cmd|--ram_model|q19-order
+; q20-q29: far-call trampolines, the questions q15 left open (docs/known.md). Each of these is
+; also linked by CCS 5.5's lnk6x 7.4.4 (links744.txt), into <name>-744.out and .map.
+q20-flags|flat.cmd|--ram_model|q20-flags
+q21-place|far.cmd|--ram_model|q21-place
+q22-odd|far.cmd|--ram_model|q22-odd
+q23-share|far.cmd|--ram_model|q23-share
+q24-two|far.cmd|--ram_model|q24-two-a q24-two-b
+q25-local|far.cmd|--ram_model|q25-local
+q26-ranges|ranges.cmd|--ram_model|q26-ranges
+q27-reach-fwd-in|reach-fwd-in.cmd|--ram_model|q27-reach
+q27-reach-fwd-out|reach-fwd-out.cmd|--ram_model|q27-reach
+q27-reach-margin|reach-margin.cmd|--ram_model|q27-reach
+q27-reach-back-in|reach-back-in.cmd|--ram_model|q27-reach
+q27-reach-back-out|reach-back-out.cmd|--ram_model|q27-reach
+q28-order|far.cmd|--ram_model|q28-order
+q29-later|later.cmd|--ram_model|q29-later

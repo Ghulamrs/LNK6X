@@ -71,29 +71,41 @@ else
     printf '%-22s FAIL  %s\n' rom-model-quiet "$(head -1 "$OUT/bad-rommodel.log")"; fail=$((fail+1))
 fi
 
-# A branch out of PCR_S21's reach is refused by name, never truncated (the review's L-A5):
-# lnk6x writes a trampoline, this linker does not yet. q15's CALLP sits at 0xC0000000, so the
-# field holds -0x100000..0xFFFFF words: .fartext at 0xC03FFFE0 is in reach and at 0xC0400000
-# is one fetch packet past it. The boundary pair says the check is neither late nor early.
+# A branch out of PCR_S21's reach goes through a trampoline now, lnk6x's `$Tramp$S$$callee`
+# (run.sh holds q15's image to lnk6x's byte for byte). What stays refused by name is every
+# other bounded field out of range (the review's L-A5): q15's own relocation turned into a
+# PCR_S12 - one byte of its .rel.text - is a 12-bit branch 16 MB long. q15's CALLP sits at
+# 0xC0000000, so PCR_S21 holds -0x100000..0xFFFFF words: .fartext at 0xC03FFFE0 is in reach
+# and needs none, at 0xC0400000 is one fetch packet past it and gets one. The boundary pair
+# says the reach is neither late nor early.
 far_at() {
     sed "s/origin = 0xC1000000/origin = $1/" "$CMD/far.cmd" > "$OUT/far-$1.cmd"
 }
-one far-call "R_C6000_PCR_S21 to \"faraway\" (0xc1000000) at q15-far.obj(.text)+0x0" -- \
-    "$CMD/far.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
-# --rom_model relocates twice and only the second pass may refuse; with no .cinit to compose
-# there is no second pass, and the refusal still has to come.
-one far-call-rom "does not fit a signed 21-bit field" -- \
-    "$CMD/far.cmd" --rom_model -o "$OUT/x.out" "$REF/q15-far.obj"
+# linked <name> <map must say> <map must not say> -- <the linker's arguments>
+linked() {
+    name=$1; want=$2; not=$3; shift 4
+    if "$LNK" "$@" -m "$OUT/$name.map" > "$OUT/bad-$name.log" 2>&1 && [ ! -s "$OUT/bad-$name.log" ] \
+            && { [ -z "$want" ] || grep -qF "$want" "$OUT/$name.map"; } \
+            && { [ -z "$not" ] || ! grep -qF "$not" "$OUT/$name.map"; }; then
+        printf '%-22s ok\n' "$name"
+    else
+        printf '%-22s FAIL  %s\n' "$name" "$(head -1 "$OUT/bad-$name.log")"; fail=$((fail+1))
+    fi
+}
+linked far-call '$Tramp$S$$faraway' '' -- "$CMD/far.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
+# --rom_model relocates twice, and the trampoline has to survive the second layout.
+linked far-call-rom '$Tramp$S$$faraway' '' -- "$CMD/far.cmd" --rom_model -o "$OUT/x.out" "$REF/q15-far.obj"
 far_at 0xC0400000
-one far-call-edge "does not fit a signed 21-bit field" -- \
-    "$OUT/far-0xC0400000.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
+linked far-call-edge '$Tramp$S$$faraway' '' -- "$OUT/far-0xC0400000.cmd" --ram_model -o "$OUT/x.out" "$REF/q15-far.obj"
 far_at 0xC03FFFE0
-if "$LNK" "$OUT/far-0xC03FFFE0.cmd" --ram_model -o "$OUT/near.out" "$REF/q15-far.obj" \
-        > "$OUT/bad-near.log" 2>&1 && [ ! -s "$OUT/bad-near.log" ]; then
-    printf '%-22s ok\n' far-call-in-reach
-else
-    printf '%-22s FAIL  %s\n' far-call-in-reach "$(head -1 "$OUT/bad-near.log")"; fail=$((fail+1))
-fi
+linked far-call-in-reach '' 'Tramp' -- "$OUT/far-0xC03FFFE0.cmd" --ram_model -o "$OUT/near.out" "$REF/q15-far.obj"
+# q15's .rel.text is at file offset 0x11c; its one entry's type byte is at 0x120.
+cp "$REF/q15-far.obj" "$OUT/q15-s12.obj"
+printf '\005' | dd of="$OUT/q15-s12.obj" bs=1 seek=288 conv=notrunc 2>/dev/null
+one far-branch-s12 "R_C6000_PCR_S12 to \"faraway\" (0xc1000000) at q15-s12.obj(.text)+0x0" -- \
+    "$CMD/far.cmd" --ram_model -o "$OUT/x.out" "$OUT/q15-s12.obj"
+one far-branch-s12-rom "does not fit a signed 12-bit field" -- \
+    "$CMD/far.cmd" --rom_model -o "$OUT/x.out" "$OUT/q15-s12.obj"
 
 echo "---"
 [ "$fail" -eq 0 ] && { echo "bad.sh: every case said what it should"; exit 0; }

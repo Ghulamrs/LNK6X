@@ -101,6 +101,43 @@ static bool check_range(u32 type, u32 P, u32 V, std::string &err)
 
 static bool apply(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err);
 
+bool pcr_s21_reaches(u32 P, u32 V)
+{
+    i32 d = (i32)(V - (P & ~0x1Fu));
+    if (d & 3) return true;
+    i32 w = d >> 2;
+    return w >= -(1 << 20) && w <= (1 << 20) - 1;
+}
+
+/*  **The trampoline lnk6x writes for a far call**, from q15-far.out (8.2.2), word for word:
+ *
+ *      053c54f7   STW   .D2T2  B10,*B15--[2]     ; in parallel with the MVKL
+ *      0500002a   MVKL  .S2    callee,B10        ; the low half, in bits 7..22
+ *      0500006a   MVKH  .S2    callee,B10        ; the high half
+ *      00280362   B     .S2    B10
+ *      053c52e6   LDW   .D2T2  *++B15[2],B10     ; B10 back, in the branch's delay slots
+ *      00006000   NOP   4
+ *      00000000   NOP
+ *      00000000   NOP
+ *
+ *  B3 is untouched, so a CALLP's return address and a B's lack of one both survive it. */
+/*
+ *  **And when the trampoline itself reaches the callee, it is a plain branch**: `B .S1 callee`
+ *  (00000010 with the PCR_S21 field), `NOP 5` (00008000), six zero words - q20's to a callee
+ *  0x20 on, q27-reach-fwd-out's to two 0x3FFFFC and 0x3FFFC0 on, the last words of reach from
+ *  their own fetch packets. Same 32 bytes either way, so which it is never moves anything. */
+void tramp_code(u8 *p, u32 V, u32 P)
+{
+    static const u32 lng[8] = { 0x053c54f7u, 0x0500002au, 0x0500006au, 0x00280362u,
+                                0x053c52e6u, 0x00006000u, 0x00000000u, 0x00000000u };
+    static const u32 sht[8] = { 0x00000010u, 0x00008000u, 0, 0, 0, 0, 0, 0 };
+    bool near = P && pcr_s21_reaches(P, V) && !((V - (P & ~0x1Fu)) & 3);
+    for (int i = 0; i < 8; i++) wr32(p + 4 * i, near ? sht[i] : lng[i]);
+    if (near) { field(p, (V - (P & ~0x1Fu)) >> 2, 7, 21); return; }
+    field(p + 4, V & 0xFFFFu, 7, 16);
+    field(p + 8, (V >> 16) & 0xFFFFu, 7, 16);
+}
+
 bool apply_reloc(u32 type, u8 *p, u32 P, u32 S, i32 A, u32 B, std::string &err, bool &range)
 {
     range = false;

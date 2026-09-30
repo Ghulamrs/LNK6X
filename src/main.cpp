@@ -25,7 +25,7 @@ bool Link::run()
     if (!read_inputs())    return false;
     if (!eliminate())      return false;
     if (!build_sections()) return false;
-    if (!allocate())       return false;
+    if (!layout())         return false;
     /*  Under --rom_model this first pass is provisional - .cinit is not laid yet - so a
      *  field out of range here is not yet a refusal; the pass that writes the image checks. */
     if (!fix_up(!opt.rom_model)) return false;
@@ -38,7 +38,7 @@ bool Link::run()
     if (opt.rom_model) {
         if (!compose_cinit()) return false;
         if (cinit_in >= 0) {
-            if (!allocate()) return false;
+            if (!layout()) return false;
             if (!fix_up())   return false;
             place_cinit();
         } else if (!fix_up()) return false;       /* nothing moved: the same words, checked */
@@ -65,6 +65,32 @@ void Link::write_map()
                     mods[c->module].name.c_str(), c->name.c_str());
         }
         fprintf(f, "\n");
+    }
+    /*  lnk6x's own table, as q15-far.map lays it out: the callee named by its input section
+     *  and offset, the trampoline by its symbol, then one line per call sent through it. */
+    if (!tramps.empty()) {
+        size_t ncalls = 0;
+        fprintf(f, "FAR CALL TRAMPOLINES\n\n");
+        fprintf(f, "callee name               trampoline name\n");
+        fprintf(f, "   callee addr  tramp addr   call addr  call info\n");
+        fprintf(f, "--------------  -----------  ---------  ----------------\n");
+        for (size_t t = 0; t < tramps.size(); t++) {
+            const Tramp &tr = tramps[t];
+            const Module &tm = mods[tr.tmod];
+            std::string sec = tr.tsec < (int)tm.secs.size() ? tm.secs[tr.tsec].name : "?";
+            fprintf(f, "$%s:%s$0x%x  %s\n", sec.c_str(), tm.name.c_str(), (unsigned)tr.toff, tr.name.c_str());
+            for (size_t k = 0; k < tr.calls.size(); k++) {
+                const InSec *c = all[tr.calls[k].first];
+                /* the callee and trampoline addresses on the first call's line only (q23) */
+                if (k == 0) fprintf(f, "   %08x     %08x  ", tr.target, all[tr.in]->addr);
+                else        fprintf(f, "%29s", "");
+                fprintf(f, "   %08x   %s (%s)\n", c->addr + tr.calls[k].second,
+                        mods[c->module].name.c_str(), c->name.c_str());
+            }
+            ncalls += tr.calls.size();
+        }
+        fprintf(f, "\n[%u trampolines]\n[%u trampoline calls]\n\n",
+                (unsigned)tramps.size(), (unsigned)ncalls);
     }
     fclose(f);
 }
