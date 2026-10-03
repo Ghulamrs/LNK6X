@@ -375,6 +375,33 @@ oracle's address and size, but for isort's `.cinit` and the index behind it, 8 b
 
 The two kernels' cycle counts against lnk6x's images are in C++Optimize's CLAUDE.md.
 
+## .init_array, mended 2026-10-03
+
+**A C++ program's static constructors never ran.** RIDE's common-back-end study linked one
+cpp11 object (`static std::string tag = "shapes";`) with this linker and with lnk6x 7.4.4: on
+TI's cycle-accurate simulator lnk6x's image printed `shapes big 42 13.0` and this one printed
+` big 42 13.0`. Two rules were missing, and q07 could show neither, having no `.init_array`:
+
+  * **`.init_array` is a root.** Nothing names a constructor's entry but `_c_int00`'s walk from
+    `__TI_INITARRAY_Base` to `_Limit`, so elimination dropped every one; lnk6x keeps them.
+  * **`__TI_INITARRAY_Base` and `_Limit` are defined at the section's ends** where an object
+    brings an `.init_array`, and left weak undefined where none does, as q07 shows lnk6x
+    leaving them. And under `--rom_model` `.init_array` stays PROGBITS, loaded as it is rather
+    than through `.cinit`, as both lnk6x versions lay it.
+
+With both, the study's C++ image has lnk6x 7.4.4's `.init_array`, both names at 8000da8c and
+8000da90, and prints `shapes big 42 13.0` (101,207 cycles against lnk6x's 99,851 - the unwind
+index and `.const` differ as they did before); the C image, with no `.init_array`, is
+byte-identical to the one before the change. **q30** holds it in the bed against lnk6x 8.2.2:
+the same differences as q07 and nothing more, where the linker before this change also
+dropped `.init_array` and missed by 9 bytes of `.text`.
+
+**Found beside it and not mended:** q30's first version had one `.bss` word, and lnk6x 8.2.2
+did not pull `__TI_zero_init` for it where this linker did - 32 bytes more `.text` and every
+address after it moved. The zero-fill rule above was read off hello's `.far`; what tells
+lnk6x a `.bss` written by the `.bss` directive needs no zero-fill record is not yet known.
+q30 carries no variable so that it asks one question.
+
 ## Things that are this linker's own
 
 Nothing. There is no equivalent here of LINK's `/timestamp:`, because a TI image carries no

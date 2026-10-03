@@ -13,3 +13,4 @@ q18-cinit      31297   ; as q07
 ; (.text:_c_int00 for .text) - .strtab is longer and every offset after the first such name
 ; moves. Their symbol *set* is nearer lnk6x's (q07: 147 of ours not in lnk6x's image before,
 ; 23 after), the bytes cmp counts are not. Every far-call probe, 8.2.2 and 7.4.4, matches.
+q30-initarray  31660   ; as q07: the two unwind-table words, attributes, symbols (03-10)

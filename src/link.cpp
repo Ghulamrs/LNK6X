@@ -244,8 +244,9 @@ bool Link::read_inputs()
  *  happens - and it writes them against an output section rather than as absolutes, except the
  *  three that are sizes. All of this is read off q07's image and map (the review's N5).
  *
- *  __TI_INITARRAY_Base and _Limit are not here: the runtime declares them weak undefined and
- *  q07 shows lnk6x leaving them that way, which the weak rule already does.
+ *  __TI_INITARRAY_Base and _Limit bracket .init_array, the constructors _c_int00 runs before
+ *  main. They are defined only where an object brings an .init_array: q07 has none and lnk6x
+ *  leaves them weak undefined there, where a C++ static constructor gets them (cbs, 03-10).
  */
 void Link::add_linker_symbols()
 {
@@ -255,6 +256,8 @@ void Link::add_linker_symbols()
         { "__TI_SYSMEM_SIZE",         "",               3 },   /* --heap_size, absolute */
         { "__TI_UNWIND_TABLE_START",  ".c6xabi.exidx",  0 },
         { "__TI_UNWIND_TABLE_END",    ".c6xabi.exidx",  1 },
+        { "__TI_INITARRAY_Base",      ".init_array",    0 },
+        { "__TI_INITARRAY_Limit",     ".init_array",    1 },
         { "__TI_CINIT_Base",          ".cinit",         0 },
         { "__TI_CINIT_Limit",         ".cinit",         1 },
         { "__TI_Handler_Table_Base",  ".cinit",         0 },
@@ -277,6 +280,11 @@ void Link::add_linker_symbols()
             if (y.shndx == SHN_UNDEF && !y.name.empty() && defined.find(y.name) == defined.end())
                 wanted[y.name] = true;
         }
+    bool init_array = false;
+    for (size_t mi = 0; mi < mods.size() && !init_array; mi++)
+        for (size_t si = 0; si < mods[mi].secs.size() && !init_array; si++)
+            if (base_section(mods[mi].secs[si].name) == ".init_array" && mods[mi].secs[si].size) init_array = true;
+    if (!init_array) wanted["__TI_INITARRAY_Base"] = wanted["__TI_INITARRAY_Limit"] = false;
 
     /*  COMMON: a symbol with no section and a size, which is what `st_shndx` 0xFFF2 means.
      *  The runtime has four - parmbuf, __TI_tmpnams, _ZSt16__dummy_typeinfo, __dso_handle -
@@ -405,6 +413,7 @@ void Link::set_linker_symbols()
         int end = 1;
         if (y.name == "__TI_STACK_END")                 sec = ".stack";
         else if (y.name.compare(0, 17, "__TI_UNWIND_TABLE") == 0) sec = ".c6xabi.exidx";
+        else if (y.name.compare(0, 15, "__TI_INITARRAY_") == 0) sec = ".init_array";
         /*  **Only the .cinit table's own names default to .cinit.** The rest - binit and
          *  __binit__ among them - keep the value add_linker_symbols gave them: 0xFFFFFFFF,
          *  which _auto_init_elf reads as "no boot copy table". Moved to .cinit's end, it
@@ -412,7 +421,7 @@ void Link::set_linker_symbols()
         else if (y.name != "__TI_CINIT_Base" && y.name != "__TI_CINIT_Limit" &&
                  y.name != "__TI_Handler_Table_Base" && y.name != "__TI_Handler_Table_Limit") continue;
         if (y.name == "__TI_UNWIND_TABLE_START" || y.name == "__TI_CINIT_Base" ||
-            y.name == "__TI_Handler_Table_Base") end = 0;
+            y.name == "__TI_Handler_Table_Base" || y.name == "__TI_INITARRAY_Base") end = 0;
         int oi = out_index(sec);
         if (oi < 0) continue;
         y.value = outs[oi].addr + (end ? outs[oi].size : 0);
@@ -461,6 +470,16 @@ bool Link::eliminate()
             work.push_back(std::make_pair(d->second.first, (int)hx));
         }
     }
+
+    /*  **.init_array is a root**: nothing names a constructor's entry but the startup's walk
+     *  between __TI_INITARRAY_Base and _Limit, which elimination cannot see. lnk6x keeps it. */
+    for (size_t mi = 0; mi < mods.size(); mi++)
+        for (size_t si = 0; si < mods[mi].secs.size(); si++) {
+            InSec &x = mods[mi].secs[si];
+            if (x.live || x.dropped || base_section(x.name) != ".init_array") continue;
+            x.live = true;
+            work.push_back(std::make_pair((int)mi, (int)si));
+        }
 
     /*  **An unwind index entry lives as long as the code it describes.** `.c6xabi.exidx`
      *  is SHF_LINK_ORDER with sh_link naming its function's section; nothing refers to it,
@@ -1401,8 +1420,9 @@ bool Link::compose_cinit()
         OutSec &o = outs[oi];
         if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
         if (o.type != SHT_PROGBITS || o.size == 0) continue;
-        /*  .args is the loader's to fill: 7.4.4 keeps it PROGBITS under --rom_model (iop.map). */
-        if (o.name == ".cinit" || o.name == ".args") continue;
+        /*  .args is the loader's to fill: 7.4.4 keeps it PROGBITS under --rom_model (iop.map), and
+         *  .init_array is loaded as it is, the startup reading it before .cinit is copied (cbs). */
+        if (o.name == ".cinit" || o.name == ".args" || o.name == ".init_array") continue;
 
         /*  The section's bytes, laid out as they will be at run time. A hole between two
          *  contributions is zero, as it is in the image. */
