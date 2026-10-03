@@ -91,16 +91,33 @@ bool Link::write_image()
     /*  A segment starts at the largest alignment of the sections it will hold, not its first's:
      *  q19's .neardata is aligned 1 and lnk6x puts it at 0x40, .text's 32. The groups are the
      *  segments' own, by the rule the segment loop below applies. */
-    std::vector<u32> start_align(placed.size(), 0);
+    std::vector<u32> start_align(placed.size(), 0);    /* non-zero where a segment begins */
+    /*  **The same run the segment loop makes**: one kind - file bytes or none - never write with
+     *  execute, and across a gap smaller than the next section's alignment (or 8). Grouped by a
+     *  stricter rule, q30's .extab took .switch's group past a NOBITS .fardata, was aligned by
+     *  .cinit's 8, and its offset drifted 4 from its address - two segments where lnk6x has one. */
+    bool lead_file = false;
     for (size_t k = 0, lead = 0, end = 0, flags = 0; k < placed.size(); k++) {
         const OutSec &o = outs[placed[k]];
         if (!o.size) continue;
         u32 f = (u32)flags | o.pflags;
-        if (start_align[lead] && !((f & PF_W) && (f & PF_X)) && o.addr == end) {
+        const bool file = (o.type != SHT_NOBITS);
+        /*  8.2.2 runs across a small gap (q30's .const and .extab, 2 bytes); 7.4.4 never does */
+        const bool near = !opt.cgt744 && o.addr >= end && o.addr - end < (o.align > 8 ? o.align : 8);
+        const bool same_x = ((u32)flags & PF_X) == (o.pflags & PF_X);
+        /*  a stricter alignment joins only a run whose start already has it: q32's .switch is at
+         *  4 mod 8, and lnk6x opens a segment for .cinit rather than pad .switch to 8 */
+        const bool fits = !start_align[lead] || o.align <= start_align[lead] ||
+                          (o.align && outs[placed[lead]].addr % o.align == 0);
+        /*  and never a writable section with a read-only one: q30 under --ram_model has .fardata
+         *  (RW) between .extab and .switch, and lnk6x gives it a segment of its own */
+        const bool same_w = ((u32)flags & PF_W) == (o.pflags & PF_W);
+        if (start_align[lead] && file == lead_file && !((f & PF_W) && (f & PF_X)) && fits && same_w &&
+            (o.addr == end || (near && same_x))) {
             if (o.align > start_align[lead]) start_align[lead] = o.align;
             flags = f;
         } else {
-            lead = k; start_align[k] = o.align ? o.align : 1; flags = o.pflags;
+            lead = k; start_align[k] = o.align ? o.align : 1; flags = o.pflags; lead_file = file;
         }
         end = o.addr + o.size;
     }
@@ -300,14 +317,12 @@ bool Link::write_image()
         OutSec &o = outs[placed[k]];
         if (!o.size) continue;
         bool file = (o.type != SHT_NOBITS);     /* .c6xabi.exidx is SHT_C6000_UNWIND: file */
-        if (!segs.empty() && seg_file.back() == file) {
+        /*  The runs are the ones the offsets were laid out by: a section that began one there
+         *  begins a segment here, and every other joins the segment before it. */
+        if (!segs.empty() && seg_file.back() == file && !start_align[k]) {
             Seg &g = segs.back();
             u32 flags = g.flags | o.pflags;
-            bool mixes = (flags & PF_W) && (flags & PF_X);
-            u32 end = g.vaddr + g.memsz;
-            u32 gap = o.addr - end;
-            bool near = o.addr >= end && gap < (o.align > 8 ? o.align : 8);
-            if (!mixes && near && (!file || o.offset - (g.offset + g.filesz) == gap)) {
+            {
                 g.memsz = (o.addr + o.size) - g.vaddr;
                 if (file) g.filesz = (o.offset + o.size) - g.offset;
                 g.flags = flags;

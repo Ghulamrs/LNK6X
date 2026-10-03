@@ -13,22 +13,24 @@ q18-cinit       31261   ; as q07
 ; (.text:_c_int00 for .text) - .strtab is longer and every offset after the first such name
 ; moves. Their symbol *set* is nearer lnk6x's (q07: 147 of ours not in lnk6x's image before,
 ; 23 after), the bytes cmp counts are not. Every far-call probe, 8.2.2 and 7.4.4, matches.
-q30-initarray   31642   ; as q07: the two unwind-table words, attributes, symbols (03-10)
+q30-initarray   31241   ; as q07: the two unwind-table words, attributes, symbols (03-10)
 ; Re-pinned 2026-10-03: archive members taken in one pass in archive order, as lnk6x does,
 ; moves the symbol table; q05 and q16 rose by that, the runtime probes fell. New: q30-q36 under
 ; both linkers - every loaded section matches; the segment table and the symbols do not.
-q30-initarray-ram      30182   ; the segment table, attributes and symbols - every loaded section matches
-q31-zero-small         31375   ; the segment table, attributes and symbols - every loaded section matches
-q32-zero-far           31248   ; the segment table, attributes and symbols - every loaded section matches
-q33-zero-big           31287   ; the segment table, attributes and symbols - every loaded section matches
-q35-initarray-two      31742   ; the segment table, attributes and symbols - every loaded section matches
-q35-initarray-rev      31377   ; the segment table, attributes and symbols - every loaded section matches
-q36-initarray-sub      31640   ; the segment table, attributes and symbols - every loaded section matches
-q07-lib-744            32276   ; the segment table, attributes and symbols - every loaded section matches
-q30-initarray-744      32338   ; the segment table, attributes and symbols - every loaded section matches
-q31-zero-small-744     32634   ; the segment table, attributes and symbols - every loaded section matches
-q32-zero-far-744       32708   ; the segment table, attributes and symbols - every loaded section matches
-q33-zero-big-744       32749   ; the segment table, attributes and symbols - every loaded section matches
-q35-initarray-two-744  32389   ; the segment table, attributes and symbols - every loaded section matches
-q35-initarray-rev-744  32552   ; the segment table, attributes and symbols - every loaded section matches
-q36-initarray-sub-744  32314   ; the segment table, attributes and symbols - every loaded section matches
+q30-initarray-ram      30247   ; attributes and symbols - every loaded section and the segment table match
+q31-zero-small         31243   ; attributes and symbols - every loaded section and the segment table match
+q32-zero-far           31277   ; attributes and symbols - every loaded section and the segment table match
+q33-zero-big           31287   ; attributes and symbols - every loaded section and the segment table match
+q35-initarray-two      31303   ; attributes and symbols - every loaded section and the segment table match
+q35-initarray-rev      31377   ; attributes and symbols - every loaded section and the segment table match
+q36-initarray-sub      31228   ; attributes and symbols - every loaded section and the segment table match
+q07-lib-744            32311   ; attributes and symbols - every loaded section and the segment table match
+q30-initarray-744      32366   ; attributes and symbols - every loaded section and the segment table match
+q31-zero-small-744     32664   ; attributes and symbols - every loaded section and the segment table match
+q32-zero-far-744       32708   ; attributes and symbols - every loaded section and the segment table match
+q33-zero-big-744       32774   ; attributes and symbols - every loaded section and the segment table match
+q35-initarray-two-744  32425   ; attributes and symbols - every loaded section and the segment table match
+q35-initarray-rev-744  32583   ; attributes and symbols - every loaded section and the segment table match
+q36-initarray-sub-744  32344   ; attributes and symbols - every loaded section and the segment table match
+; Re-pinned 2026-10-03 again: segments are lnk6x's runs now (docs/known.md) - every image in
+; the bed has lnk6x's segment table, and what each still differs in is the symbols and attributes.

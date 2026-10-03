@@ -422,8 +422,15 @@ Measured: the cbs C++ image linked `--cgt=7.4.4` now takes **99,851 cycles on th
 simulator, lnk6x 7.4.4's own count** (101,207 after the first half of this round, a blank
 string before it); against CCS 7.4's runtime it runs in 99,571 and the C program in 29,822, the
 new zero-fill path included. The six kernels at -O1 and -O2 keep every loaded section as before.
-Every new probe matches lnk6x in every loaded section; the segment table (how sections are
-grouped into program headers) still differs, and so do 30 bytes of the cbs image's `.const` and
+Every new probe matches lnk6x in every loaded section, and - mended the same evening - in the
+segment table too: **a segment is a run of sections lnk6x would lay as one**, and the file offsets
+are laid out by the same runs. A run is one kind (file bytes or none), never mixes write with
+execute or a writable section with a read-only one, takes a stricter alignment only where its
+start already has it (q32's `.switch` at 4 mod 8 ends before an 8-aligned `.cinit`), and under
+8.2.2 alone crosses a small gap between two sections of the same execute permission (q30's
+`.const` and `.extab`, 2 bytes; 7.4.4 makes them two segments). All 78 images of the bed and the
+six kernels at -O1 and -O2, linked again by lnk6x 7.4.4 on the box, have lnk6x's segment table.
+Still different: so do 30 bytes of the cbs image's `.const` and
 the 2 bytes of `.text` that load one of its strings - two 15-byte `.const:.string` tie, and q34
 did not reproduce the rule that orders them.
 
