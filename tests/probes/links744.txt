@@ -15,3 +15,15 @@ q27-reach-back-in|reach-back-in.cmd|--ram_model|q27-reach
 q27-reach-back-out|reach-back-out.cmd|--ram_model|q27-reach
 q28-order|far.cmd|--ram_model|q28-order
 q29-later|later.cmd|--ram_model|q29-later
+; The runtime probes again under 7.4.4, against its own rts6740_elf_eh.lib (C:\cxx1\c6747-lib,
+; copied to the probe directory as rts6740_elf_eh-744.lib so that the bed can name it).
+q07-lib|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q07-lib
+q30-initarray|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q30-initarray
+q31-zero-small|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q31-zero-small
+q32-zero-far|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q32-zero-far
+q33-zero-big|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q33-zero-big
+q34-tie-align|flat.cmd|--ram_model|q34-tie-align
+q37-tie-input-two|flat.cmd|--ram_model|q37-tie-input q37-tie-aaa
+q35-initarray-two|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q35-initarray-a q35-initarray-b
+q35-initarray-rev|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q35-initarray-b q35-initarray-a q35-initarray-0
+q36-initarray-sub|flat.cmd|--rom_model -l rts6740_elf_eh-744.lib|q36-initarray-sub

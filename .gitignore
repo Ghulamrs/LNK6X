@@ -9,3 +9,5 @@ x64/
 tests/corpus/*/ref/
 tests/corpus/*/*.obj
 tests/corpus/*/*.s
+# 7.4.4's runtime, copied in by tests/probes.sh for the -744 runtime probes; TI's, not ours
+tests/ref/rts6740_elf_eh-744.lib

@@ -17,6 +17,7 @@
 #include "lnk.h"
 
 #include <algorithm>
+#include <set>
 #include <cstdio>
 #include <cstring>
 
@@ -181,54 +182,51 @@ bool Link::read_inputs()
     for (size_t mi = 0; mi < mods.size(); mi++) if (!take_module((int)mi)) return false;
     if (libs.empty()) { add_linker_symbols(); return true; }
 
-    /*  Then the archives, in passes. One pass takes every member the current undefined set
-     *  names; the members it take may ask for more, which the next pass answers. The entry
-     *  point is asked for first, since with a runtime it is the library that has it. A weak
-     *  undefined name does not pull a member - that is what weak means - which is why the
-     *  runtime's optional hooks do not drag their implementations in. */
-    std::map<std::string, bool> weak_only;
+    /*  **An archive is scanned in passes, each pass a walk over its members in the archive's
+     *  order, and a member is taken the moment the walk reaches it with a name that is still
+     *  undefined** - so a member taken early in a pass can make a later one wanted in the
+     *  same pass. That is lnk6x's order, read off its 7.4.4 image of the cbs C++ program:
+     *  its STT_FILE names come as two alphabetical runs, boot ... vars and then _lock ...,
+     *  with exit (boot's), newhandler (new_'s) and tdeh_unwinder (tdeh_pr_c6000's) in the
+     *  first run though nothing on the command line names them - one pass, not one round of
+     *  direct references. It matters because a size tie between two contributions of one
+     *  name goes to the one loaded first (q07's two 4-byte `.const:.string`). The entry point
+     *  is asked for first, since with a runtime it is the library that has it, and the
+     *  decompressors the cinit table names with it. A weak undefined name does not pull a
+     *  member - that is what weak means - which is why the runtime's optional hooks do not
+     *  drag their implementations in. Not __TI_zero_init: a pulled member's symbols reach the
+     *  image even when its code is eliminated, and lnk6x has none of that one's unless it is
+     *  used - so it is pulled by eliminate(), once a zero-fill record is known to need it. */
+    std::set<std::string> undef;                   /* strong undefined names, as of now */
+    size_t scanned = 0;                            /* modules whose undefineds are in `undef` */
+    std::vector<std::string> extra;
+    if (defined.find(opt.entry) == defined.end()) extra.push_back(opt.entry);
+    if (opt.rom_model) { extra.push_back("__TI_decompress_rle24"); extra.push_back("__TI_decompress_none"); }
     for (;;) {
-        std::vector<std::string> want;
-        std::map<std::string, bool> asked;
-        if (defined.find(opt.entry) == defined.end()) { want.push_back(opt.entry); asked[opt.entry] = true; }
-        /*  **The decompressors the cinit table names.** Nothing in the program calls them -
-         *  the startup code reaches them through the handler table this linker writes - so
-         *  without asking for them here they are never pulled out of the runtime, and the
-         *  table would point at nothing. */
-        if (opt.rom_model) {
-            /*  Not __TI_zero_init: a pulled member's symbols reach the image even when its code
-             *  is eliminated, and lnk6x has none of that one's unless it is used - so it is
-             *  pulled by eliminate(), once a zero-fill record is known to need it. */
-            static const char *const kHandlers[] = { "__TI_decompress_rle24",
-                                                     "__TI_decompress_none", 0 };
-            for (int h = 0; kHandlers[h]; h++)
-                if (defined.find(kHandlers[h]) == defined.end() && !asked[kHandlers[h]]) {
-                    want.push_back(kHandlers[h]); asked[kHandlers[h]] = true;
-                }
-        }
-        for (size_t mi = 0; mi < mods.size(); mi++)
-            for (size_t k = 0; k < mods[mi].syms.size(); k++) {
-                const Sym &y = mods[mi].syms[k];
-                if (y.shndx != SHN_UNDEF || y.name.empty()) continue;
-                if ((y.info >> 4) != STB_GLOBAL) { weak_only[y.name] = true; continue; }
-                if (defined.find(y.name) != defined.end() || asked[y.name]) continue;
-                asked[y.name] = true;
-                want.push_back(y.name);
-            }
-        /*  One name at a time, the member taken before the next name is asked: a member
-         *  taken for one name may define the next - lowlev.obj defines both unlink and
-         *  remove - and lnk6x then takes no second member for it (fib against the runtime). */
         bool took = false;
         for (size_t a = 0; a < libs.size(); a++) {
             Archive &ar = libs[a];
-            for (size_t u = 0; u < want.size(); u++) {
-                if (defined.find(want[u]) != defined.end()) continue;
-                const u32 *hit = ar.find(want[u]);
-                if (!hit || ar.taken.count(*hit)) continue;
-                Module m;
-                if (!ar.member(*hit, m, err)) return false;
-                ar.taken.insert(*hit);
-                mods.push_back(m);
+            /*  the members in archive order, each with the names the index gives it */
+            std::map<u32, std::vector<std::string> > members;
+            for (size_t k = 0; k < ar.index.size(); k++) members[ar.index[k].second].push_back(ar.index[k].first);
+            for (std::map<u32, std::vector<std::string> >::iterator m = members.begin(); m != members.end(); ++m) {
+                if (ar.taken.count(m->first)) continue;
+                for (; scanned < mods.size(); scanned++)
+                    for (size_t k = 0; k < mods[scanned].syms.size(); k++) {
+                        const Sym &y = mods[scanned].syms[k];
+                        if (y.shndx == SHN_UNDEF && !y.name.empty() && (y.info >> 4) == STB_GLOBAL) undef.insert(y.name);
+                    }
+                bool wanted = false;
+                for (size_t k = 0; k < m->second.size() && !wanted; k++) {
+                    const std::string &n = m->second[k];
+                    if (defined.find(n) != defined.end()) continue;
+                    if (undef.count(n) || std::find(extra.begin(), extra.end(), n) != extra.end()) wanted = true;
+                }
+                if (!wanted) continue;
+                Module md;
+                if (!ar.member(m->first, md, err)) return false;
+                ar.taken.insert(m->first);
+                mods.push_back(md);
                 if (!take_module((int)mods.size() - 1)) return false;
                 took = true;
             }
@@ -472,11 +470,13 @@ bool Link::eliminate()
     }
 
     /*  **.init_array is a root**: nothing names a constructor's entry but the startup's walk
-     *  between __TI_INITARRAY_Base and _Limit, which elimination cannot see. lnk6x keeps it. */
+     *  between __TI_INITARRAY_Base and _Limit, which elimination cannot see. lnk6x keeps it -
+     *  the section of that exact name: a `.init_array:late` subsection is dropped by both
+     *  linkers like any other section nothing names (q36). */
     for (size_t mi = 0; mi < mods.size(); mi++)
         for (size_t si = 0; si < mods[mi].secs.size(); si++) {
             InSec &x = mods[mi].secs[si];
-            if (x.live || x.dropped || base_section(x.name) != ".init_array") continue;
+            if (x.live || x.dropped || x.name != ".init_array") continue;
             x.live = true;
             work.push_back(std::make_pair((int)mi, (int)si));
         }
@@ -501,10 +501,12 @@ bool Link::eliminate()
             }
         }
         if (work.empty()) {
-            /*  **__TI_zero_init is a root only when something will be zero-filled**: a live,
-             *  uninitialised .bss or .far piece under --rom_model. hello's .far is one and lnk6x
-             *  links the handler; q07 has none and lnk6x leaves it out. */
-            if (opt.rom_model && !zero_root) {
+            /*  **__TI_zero_init is a root only under 7.4.4, and only when something will be
+             *  zero-filled**: a live, uninitialised .bss or .far piece under --rom_model. 7.4.4
+             *  zeroes one with the handler and an 8-byte record (hello's .far, q31-q33-744);
+             *  8.2.2 never pulls the handler and writes an rle image of zeros instead (q31-q33,
+             *  ti74's isort and sieve) - which is what q30's first version met (docs/known.md). */
+            if (opt.rom_model && opt.cgt744 && !zero_root) {
                 bool need = false;
                 for (size_t mi = 0; mi < mods.size() && !need; mi++)
                     for (size_t si = 0; si < mods[mi].secs.size() && !need; si++) {
@@ -718,10 +720,14 @@ namespace {
  *  of lnk6x 7.4.4 and 8.2.2 agree; the one exclusion is `.c6xabi.exidx`, which lnk6x sorts
  *  by function address instead and this linker does not sort at all yet (docs/known.md). */
 struct NameKey {
-    std::string key;
-    NameKey(const std::string &n, const std::string &object)
-        : key(n.find(':') == std::string::npos ? object : n.substr(n.find(':') + 1)) {}
-    bool operator<(const NameKey &o) const { return key < o.key; }
+    std::string key, object;
+    NameKey(const std::string &n, const std::string &obj)
+        : key(n.find(':') == std::string::npos ? obj : n.substr(n.find(':') + 1)), object(obj) {}
+    /*  Two contributions of one name from two objects go by the object's name, not by the
+     *  order the objects came: q37 links q37-tie-input before q37-tie-aaa and lnk6x lays
+     *  aaa's `.const:yy` before input's, and q07's two 4-byte `.const:.string` are
+     *  exception_.obj's then typeinfo_.obj's (both linkers). */
+    bool operator<(const NameKey &o) const { return key != o.key ? key < o.key : object < o.object; }
 };
 
 /*  The same question for whole output sections: bigger first, a tie by name. */
@@ -910,7 +916,12 @@ bool Link::allocate()
          *  is the one exception: its order is its functions' addresses, and it is
          *  composed here, once the code it describes has been placed. */
         if (o.name == ".c6xabi.exidx") { if (!compose_exidx(o)) return false; }
-        else std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all, mods));
+        /*  **8.2.2 keeps .init_array in input order** - q35 links a (one entry) then b (two)
+         *  and gets a, b; reversed with a third it gets b, a, 0 - where 7.4.4 lays it by size
+         *  like everything else: 0, b, a both times. The order is the order the
+         *  constructors run in, which 8.2.2 leaves to the objects' order on the line. */
+        else if (!(o.name == ".init_array" && !opt.cgt744))
+            std::stable_sort(o.parts.begin(), o.parts.end(), BiggerPart(all, mods));
         /*  **Trampolines go at the end of their caller's output section**, after every input
          *  section of it, in the order they were made: q21's follows .text:small, not the
          *  .text:caller that called for it, and q24's follows the second object's .text. */
@@ -988,7 +999,8 @@ struct ExidxEntry {
     bool prel;        /* the second word is a PREL31 to `target`; else `word` as it stands */
     u32  target, word;
     bool alone;       /* the only entry of its section - the ones lnk6x folds */
-    bool operator<(const ExidxEntry &o) const { return fn < o.fn; }
+    u32  unit, seq;   /* its section's code address, and its place in that section */
+    bool operator<(const ExidxEntry &o) const { return unit != o.unit ? unit < o.unit : seq < o.seq; }
 };
 } // namespace
 
@@ -997,16 +1009,27 @@ bool Link::compose_exidx(OutSec &o)
     const int oi = (int)(&o - &outs[0]);
     if (exidx_input.empty() && exidx_in < 0) exidx_input = o.parts;
 
+    /*  **An input index section is one unit, kept in its own order, and the units go by
+     *  the address of the code each describes** - not every entry by its function. cpp11
+     *  writes one `.c6xabi.exidx:.text` for all of a file's functions, and lnk6x 7.4.4 lays
+     *  its 98 entries first and whole, four of them naming the runtime's own `std::exception`
+     *  members at the far end of .text (their weak definitions in the file's .text lost to
+     *  the library's), where sorting every entry by its function put those four last and
+     *  the cbs C++ image 465 bytes of index away from lnk6x's. The runtime's one-entry
+     *  sections sort the same either way. */
     std::vector<ExidxEntry> entries;
     std::map<std::pair<int, int>, bool> covered;    /* (module, code section) with an entry */
     for (size_t k = 0; k < exidx_input.size(); k++) {
         InSec *c = all[exidx_input[k]];
         c->out = -1;                                /* its bytes go into the composed table */
         if (c->link) covered[std::make_pair(c->module, (int)c->link)] = true;
+        u32 unit = 0;
+        if (c->link && c->link < mods[c->module].secs.size()) unit = mods[c->module].secs[c->link].addr;
         for (size_t at = 0; at + 8 <= c->data.size(); at += 8) {
             ExidxEntry e;
             e.fn = 0; e.prel = false; e.target = 0; e.word = rd32(&c->data[at + 4]);
             e.alone = (c->data.size() == 8);
+            e.unit = unit; e.seq = (u32)(at / 8);
             bool has_fn = false;
             for (size_t r = 0; r < c->relocs.size(); r++) {
                 const Rel &rl = c->relocs[r];
@@ -1020,6 +1043,7 @@ bool Link::compose_exidx(OutSec &o)
                 else { e.prel = true; e.target = S + (u32)rl.addend; }
             }
             if (!has_fn) { err = c->name + ": an unwind index entry names no function"; return false; }
+            if (!c->link) e.unit = e.fn;
             entries.push_back(e);
         }
     }
@@ -1039,6 +1063,7 @@ bool Link::compose_exidx(OutSec &o)
         if (!has && was) {
             ExidxEntry e;
             e.fn = code[k]->addr; e.prel = false; e.target = 0; e.word = EXIDX_CANTUNWIND; e.alone = true;
+            e.unit = e.fn; e.seq = 0;
             entries.push_back(e);
         }
         was = has;
@@ -1396,18 +1421,47 @@ bool Link::compose_cinit()
     struct Piece { std::vector<u8> bytes; u32 align; int out; };
     std::vector<Piece> pieces;
 
-    /*  **Uninitialised .bss and .far are zeroed by a record of their own** when the zero
-     *  handler was linked: hello's table is `.fardata` rle, then `.far` zero_init, and its
-     *  handler table puts __TI_zero_init at index 0 - which moves rle24 to 1. .cio, also
-     *  uninitialised, gets none. */
+    /*  **An uninitialised .bss or .far is zeroed through .cinit too** - .cio, also
+     *  uninitialised, is not. 7.4.4 zeroes it with __TI_zero_init and an 8-byte record;
+     *  8.2.2 writes an rle image of zeros, 9 bytes for a word and 0xD for 0x20000 (q31-q33,
+     *  both linkers). A zero section is one that the zero handler was pulled for (7.4.4,
+     *  zero_root), or any such section at all (8.2.2). */
     std::vector<int> zero_outs;
-    if (zero_root)
+    if (zero_root || !opt.cgt744)
         for (size_t oi = 0; oi < outs.size(); oi++) {
             const OutSec &o = outs[oi];
             if ((o.flags & SHF_ALLOC) && (o.flags & SHF_WRITE) && o.type == SHT_NOBITS && o.size &&
                 (o.name == ".far" || o.name == ".bss")) zero_outs.push_back((int)oi);
         }
-    const u8 rle_index = zero_outs.empty() ? 0 : 1;
+    const bool zero_records = opt.cgt744 && !zero_outs.empty();
+
+    /*  **The handler table is in the command file's order of the sections that need
+     *  each handler**: the first that wants an rle image enters rle24 and none as a pair,
+     *  the first that wants a zero record enters __TI_zero_init. 7.4.4's kernels name .far
+     *  before .fardata in C6747.cmd and put zero_init at 0; hello.c and the Compiler++
+     *  harness have a .data, named before .far, and put rle24 at 0, none 1, zero_init 2;
+     *  q31-q33-744 under flat.cmd (.bss and .far before .fardata) put zero_init at 0. 8.2.2's
+     *  table is rle24 then none in every image. */
+    for (size_t oi = 0; oi < outs.size() && zero_records; oi++) {
+        const OutSec &o = outs[oi];
+        if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE) || o.size == 0) continue;
+        if (o.name == ".cinit" || o.name == ".args" || o.name == ".init_array") continue;
+        const bool zero = std::find(zero_outs.begin(), zero_outs.end(), (int)oi) != zero_outs.end();
+        if (o.type == SHT_PROGBITS && cinit_handlers.empty()) {
+            cinit_handlers.push_back("__TI_decompress_rle24");
+            cinit_handlers.push_back("__TI_decompress_none");
+        } else if (zero && std::find(cinit_handlers.begin(), cinit_handlers.end(), "__TI_zero_init") == cinit_handlers.end())
+            cinit_handlers.push_back("__TI_zero_init");
+    }
+    if (cinit_handlers.empty() || cinit_handlers[0] == "__TI_zero_init") {
+        cinit_handlers.push_back("__TI_decompress_rle24");
+        cinit_handlers.push_back("__TI_decompress_none");
+    }
+    u8 rle_index = 0, zero_index = 0;
+    for (size_t h = 0; h < cinit_handlers.size(); h++) {
+        if (cinit_handlers[h] == "__TI_decompress_rle24") rle_index = (u8)h;
+        if (cinit_handlers[h] == "__TI_zero_init") zero_index = (u8)h;
+    }
 
     /*  **The records go in descending size of the section**, not in output-section order:
      *  7.4.4's isort puts .fardata (0x320) before .neardata (4), though .neardata is the
@@ -1418,16 +1472,18 @@ bool Link::compose_cinit()
     for (size_t bi = 0; bi < by_size.size(); bi++) {
         const size_t oi = by_size[bi].second;
         OutSec &o = outs[oi];
-        if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE)) continue;
-        if (o.type != SHT_PROGBITS || o.size == 0) continue;
+        if (!(o.flags & SHF_ALLOC) || !(o.flags & SHF_WRITE) || o.size == 0) continue;
+        const bool zero = std::find(zero_outs.begin(), zero_outs.end(), (int)oi) != zero_outs.end();
+        if (o.type != SHT_PROGBITS && !(zero && !zero_records)) continue;
         /*  .args is the loader's to fill: 7.4.4 keeps it PROGBITS under --rom_model (iop.map), and
          *  .init_array is loaded as it is, the startup reading it before .cinit is copied (cbs). */
         if (o.name == ".cinit" || o.name == ".args" || o.name == ".init_array") continue;
 
         /*  The section's bytes, laid out as they will be at run time. A hole between two
-         *  contributions is zero, as it is in the image. */
+         *  contributions is zero, as it is in the image - and a zero section under 8.2.2 is
+         *  all hole, its image the rle stream of that many zeros (q31: 00 01 01 04 00 01 00 00 00). */
         std::vector<u8> d(o.size, 0);
-        for (size_t k = 0; k < o.parts.size(); k++) {
+        for (size_t k = 0; k < o.parts.size() && o.type == SHT_PROGBITS; k++) {
             InSec *c = all[o.parts[k]];
             if (c->data.empty()) continue;
             u32 at = c->addr - o.addr;
@@ -1445,14 +1501,8 @@ bool Link::compose_cinit()
         o.type = SHT_NOBITS;                      /* its bytes live in .cinit now */
         o.progbits = false;
     }
-    if (pieces.empty() && zero_outs.empty()) return true;
+    if (pieces.empty() && !zero_records) { cinit_handlers.clear(); return true; }
 
-    /*  Both samples list the two the runtime has, rle24 first, whether or not `none` is
-     *  used - so the index of rle24 is 0 and the table is two words; __TI_zero_init goes in
-     *  front of them when a zero-fill record needs it. */
-    if (!zero_outs.empty()) cinit_handlers.push_back("__TI_zero_init");
-    cinit_handlers.push_back("__TI_decompress_rle24");
-    cinit_handlers.push_back("__TI_decompress_none");
     {
         Piece h;
         h.out = -1;                               /* the handler table: no record of its own */
@@ -1460,14 +1510,15 @@ bool Link::compose_cinit()
         h.bytes.resize(4 * cinit_handlers.size(), 0);
         pieces.push_back(h);
     }
-    /*  A zero-fill record: the handler index, three bytes of padding, and the section's
-     *  size - hello's `.far` is 00 00 00 00 48 01 00 00. */
-    for (size_t z = 0; z < zero_outs.size(); z++) {
+    /*  A zero-fill record (7.4.4): the handler's index, three bytes of padding, and the
+     *  section's size - hello's `.far` is 00 00 00 00 48 01 00 00, hello.c's, with rle24 and
+     *  none in front of the handler, 02 00 00 00 48 01 00 00. */
+    for (size_t z = 0; z < zero_outs.size() && zero_records; z++) {
         Piece pc;
         pc.out = zero_outs[z];
         pc.align = 4;
         u32 sz = outs[zero_outs[z]].size;
-        const u8 w[8] = { 0, 0, 0, 0, (u8)sz, (u8)(sz >> 8), (u8)(sz >> 16), (u8)(sz >> 24) };
+        const u8 w[8] = { zero_index, 0, 0, 0, (u8)sz, (u8)(sz >> 8), (u8)(sz >> 16), (u8)(sz >> 24) };
         pc.bytes.assign(w, w + 8);
         pieces.push_back(pc);
     }

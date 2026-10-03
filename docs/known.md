@@ -396,11 +396,36 @@ byte-identical to the one before the change. **q30** holds it in the bed against
 the same differences as q07 and nothing more, where the linker before this change also
 dropped `.init_array` and missed by 9 bytes of `.text`.
 
-**Found beside it and not mended:** q30's first version had one `.bss` word, and lnk6x 8.2.2
-did not pull `__TI_zero_init` for it where this linker did - 32 bytes more `.text` and every
-address after it moved. The zero-fill rule above was read off hello's `.far`; what tells
-lnk6x a `.bss` written by the `.bss` directive needs no zero-fill record is not yet known.
-q30 carries no variable so that it asks one question.
+**Completed the same day** (begun by Fable 5.1's probes q30-q37, under both linkers):
+
+  * **`.init_array` in what order.** 8.2.2 keeps the entries in the objects' order on the line
+    (q35: a, b; reversed with a third, b, a, 0); 7.4.4 lays them by size like any section
+    (0, b, a both times). That order is the order the constructors run in.
+  * **Only `.init_array` itself is a root**: a `.init_array:late` subsection is dropped by both
+    linkers like any section nothing names (q36). Under --ram_model the names are the same (q30-ram).
+  * **The zero-fill rule was 7.4.4's alone.** 8.2.2 never pulls `__TI_zero_init`: it zeroes an
+    uninitialised `.bss` or `.far` through an rle24 image of zeros (`00 01 01 04 00 01 00 00 00`
+    for a word, q31-q33). 7.4.4 pulls the handler with an 8-byte record - the rule hello's
+    `.far` showed - and its handler table is in the command file's order of the first section
+    wanting each handler (zero_init at 0 when `.far` is named before `.fardata`; rle24, none,
+    zero_init when a `.data` comes first). This was the 32 bytes q30's first version met.
+  * **Archive members are taken in one pass in archive order**, a member taken the moment the
+    walk reaches it with a name still undefined - read off the STT_FILE runs of lnk6x's image.
+    It decides which of two equal-sized contributions loads first.
+  * **A size tie between objects goes by the object's name** (q37), not by the line's order.
+  * **An input index section is one unit**, kept in its own order, units by their code's
+    address: cpp11's one `.c6xabi.exidx:.text` per file comes whole, where sorting every
+    entry by function moved four of them. The linker-made EXIDX_CANTUNWIND entries already
+    matched; the sentence above saying the index has none is out of date.
+
+Measured: the cbs C++ image linked `--cgt=7.4.4` now takes **99,851 cycles on the CCS 5.5
+simulator, lnk6x 7.4.4's own count** (101,207 after the first half of this round, a blank
+string before it); against CCS 7.4's runtime it runs in 99,571 and the C program in 29,822, the
+new zero-fill path included. The six kernels at -O1 and -O2 keep every loaded section as before.
+Every new probe matches lnk6x in every loaded section; the segment table (how sections are
+grouped into program headers) still differs, and so do 30 bytes of the cbs image's `.const` and
+the 2 bytes of `.text` that load one of its strings - two 15-byte `.const:.string` tie, and q34
+did not reproduce the rule that orders them.
 
 ## Things that are this linker's own
 

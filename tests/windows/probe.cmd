@@ -31,11 +31,15 @@ rem  The far-call probes again, linked by CCS 5.5's lnk6x 7.4.4 - the kernels' l
 rem  LNK6x's --cgt=7.4.4 follows - into <name>-744.out and .map. links744.txt lists them; a box
 rem  with no CCS 5.5 says NO-CGT744 and skips them rather than failing.
 if "%CG744%"=="" set CG744=C:\ti\ccsv5\tools\compiler\c6000_7.4.4\bin
+rem  7.4.4's runtime, built by mklib into C:\cxx1\c6747-lib (C++Optimize's c6747-levels), copied
+rem  here under a name of its own so that the bed can tell it from 8.2.2's
+if "%TILIB744%"=="" set TILIB744=C:\cxx1\c6747-lib
 if exist "%CG744%\lnk6x.exe" (
+    copy /y "%TILIB744%\rts6740_elf_eh.lib" rts6740_elf_eh-744.lib >nul 2>&1 || echo NO-RTS744
     for /f "usebackq tokens=1,2,3,* delims=|" %%a in ("%PROBES%\links744.txt") do (
         set objs=
         for %%o in (%%d) do set objs=!objs! %%o.obj
-        "%CG744%\lnk6x.exe" %MV% %CMDS%\%%b !objs! %%c -o %%a-744.out -m %%a-744.map > %%a-744.lnk 2>&1 || (echo LINK744-FAILED %%a & set fail=1)
+        "%CG744%\lnk6x.exe" %MV% -i . %CMDS%\%%b !objs! %%c -o %%a-744.out -m %%a-744.map > %%a-744.lnk 2>&1 || (echo LINK744-FAILED %%a & set fail=1)
         if exist %%a-744.out dis6x %%a-744.out > %%a-744.out.dis 2>&1
     )
 ) else echo NO-CGT744

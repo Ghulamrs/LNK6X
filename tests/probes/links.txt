@@ -50,6 +50,20 @@ q18-cinit|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q18-cinit
 ; q30: a constructor in .init_array under --rom_model with the runtime: the section kept and
 ; loaded as it is, __TI_INITARRAY_Base and _Limit defined at its ends (cbs, 03-10).
 q30-initarray|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q30-initarray
+; q30 under --ram_model: the same section and names where no .cinit copies anything.
+q30-initarray-ram|flat.cmd|--ram_model -l rts6740_elf_eh.lib|q30-initarray
+; q31-q33: what zeroes a .bss or a .far under --rom_model - 8.2.2 writes an rle image of
+; zeros where 7.4.4 pulls __TI_zero_init (docs/known.md, 03-10); three sizes.
+q31-zero-small|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q31-zero-small
+q32-zero-far|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q32-zero-far
+q33-zero-big|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q33-zero-big
+; q34: a size tie between contributions of different alignments (the cbs .const)
+q34-tie-align|flat.cmd|--ram_model|q34-tie-align
+q37-tie-input-two|flat.cmd|--ram_model|q37-tie-input q37-tie-aaa
+; q35, q36: two objects' .init_array entries, and an .init_array:late subsection
+q35-initarray-two|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q35-initarray-a q35-initarray-b
+q35-initarray-rev|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q35-initarray-b q35-initarray-a q35-initarray-0
+q36-initarray-sub|flat.cmd|--rom_model -l rts6740_elf_eh.lib|q36-initarray-sub
 ; q19: six sections of six sizes, named in a third order again, so that what decides the
 ; allocation order can be read rather than inferred from q07.
 q19-order-flat|flat.cmd|--ram_model|q19-order
