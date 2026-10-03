@@ -430,9 +430,21 @@ start already has it (q32's `.switch` at 4 mod 8 ends before an 8-aligned `.cini
 8.2.2 alone crosses a small gap between two sections of the same execute permission (q30's
 `.const` and `.extab`, 2 bytes; 7.4.4 makes them two segments). All 78 images of the bed and the
 six kernels at -O1 and -O2, linked again by lnk6x 7.4.4 on the box, have lnk6x's segment table.
-Still different: so do 30 bytes of the cbs image's `.const` and
-the 2 bytes of `.text` that load one of its strings - two 15-byte `.const:.string` tie, and q34
-did not reproduce the rule that orders them.
+Still different: 30 bytes of the cbs image's `.const` and the 2 bytes of `.text` that load one
+of its strings. **One tie of 774, and its rule is not found.** Fable's tie tester over 89 lnk6x
+maps (the bed, the cbs C and C++ images, the twelve kernels linked by lnk6x 7.4.4 on the box)
+finds the name after the colon right in every tie group but this one and the trampolines:
+typeinfo_.obj's `.const:.string:_ZTSSt10bad_typeid` (COMDAT, aligned 8) before newhandler.obj's
+`.const:.string` (aligned 1), both 15 bytes, where the name puts the bare one first. A C++ pair
+compiled by cl6x 7.4.4 reproduces it with the runtime. Probes built to isolate it on the box -
+the same pair as assembly, the zz piece grouped and not, both pieces in an archive in either
+order, the bare string reached only through a local label - are all laid by name by both
+linkers, so what decides it is something of those two runtime members not yet seen. Keying a
+bare `.string` by its object, or putting a grouped or a more aligned piece first, mends the cbs
+image and breaks the C image, the hash kernel or q34, and is not taken. It costs nothing that
+runs: the cbs image takes lnk6x 7.4.4's own 99,851 cycles, and a C++ case with static
+constructors and destructors (C++Optimize tools/c6747/ctor, through tools/c6747-levels) prints
+clang's output on TI's simulator linked by both linkers, in identical cycles.
 
 ## Things that are this linker's own
 
