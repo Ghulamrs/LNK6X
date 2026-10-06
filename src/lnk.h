@@ -115,6 +115,9 @@ struct InSec {
      *  when it happened to be non-zero - which failed one program and not the next. */
     bool dropped = false;        /* a second copy of a group section: another object had it */
     bool exidx_synth = false;    /* the unwind index the linker composed: its relocations name no symbol */
+    /*  For the unwind index: the (module, symbol) each relocation is against, or (-1, 0) for an
+     *  address that is final when composed. Resolved when written, after every section is placed. */
+    std::vector<std::pair<int, u32> > exidx_src;
     int  tramp = -1;             /* a far-call trampoline the linker wrote: its index in Link::tramps */
     int  out;                    /* output section, -1 */
     u32  addr;                   /* run address, once allocated */

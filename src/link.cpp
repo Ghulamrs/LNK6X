@@ -998,6 +998,11 @@ struct ExidxEntry {
     u32  fn;          /* the function's address */
     bool prel;        /* the second word is a PREL31 to `target`; else `word` as it stands */
     u32  target, word;
+    /*  What fn and target were read from - kept, because an address taken here can still move:
+     *  a map that names neither unwind section lays .c6xabi.extab after this table is composed. */
+    int  fmod, tmod;
+    u32  fsym, tsym;
+    i32  fadd, tadd;
     bool alone;       /* the only entry of its section - the ones lnk6x folds */
     u32  unit, seq;   /* its section's code address, and its place in that section */
     bool operator<(const ExidxEntry &o) const { return unit != o.unit ? unit < o.unit : seq < o.seq; }
@@ -1028,6 +1033,7 @@ bool Link::compose_exidx(OutSec &o)
         for (size_t at = 0; at + 8 <= c->data.size(); at += 8) {
             ExidxEntry e;
             e.fn = 0; e.prel = false; e.target = 0; e.word = rd32(&c->data[at + 4]);
+            e.fmod = e.tmod = -1; e.fsym = e.tsym = 0; e.fadd = e.tadd = 0;
             e.alone = (c->data.size() == 8);
             e.unit = unit; e.seq = (u32)(at / 8);
             bool has_fn = false;
@@ -1039,8 +1045,8 @@ bool Link::compose_exidx(OutSec &o)
                 if ((rl.offset != at && rl.offset != at + 4) || rl.type != R_C6000_PREL31) continue;
                 u32 S;
                 if (!sym_addr(c->module, rl.sym, S)) return false;
-                if (rl.offset == at) { e.fn = S + (u32)rl.addend; has_fn = true; }
-                else { e.prel = true; e.target = S + (u32)rl.addend; }
+                if (rl.offset == at) { e.fn = S + (u32)rl.addend; has_fn = true; e.fmod = c->module; e.fsym = rl.sym; e.fadd = rl.addend; }
+                else { e.prel = true; e.target = S + (u32)rl.addend; e.tmod = c->module; e.tsym = rl.sym; e.tadd = rl.addend; }
             }
             if (!has_fn) { err = c->name + ": an unwind index entry names no function"; return false; }
             if (!c->link) e.unit = e.fn;
@@ -1063,6 +1069,7 @@ bool Link::compose_exidx(OutSec &o)
         if (!has && was) {
             ExidxEntry e;
             e.fn = code[k]->addr; e.prel = false; e.target = 0; e.word = EXIDX_CANTUNWIND; e.alone = true;
+            e.fmod = e.tmod = -1; e.fsym = e.tsym = 0; e.fadd = e.tadd = 0;
             e.unit = e.fn; e.seq = 0;
             entries.push_back(e);
         }
@@ -1095,13 +1102,19 @@ bool Link::compose_exidx(OutSec &o)
     c->size = 8 * (u32)kept.size();
     c->data.assign(c->size, 0);
     c->relocs.clear();
+    c->exidx_src.clear();
     for (size_t k = 0; k < kept.size(); k++) {
         /*  Carried as relocations of the linker's own, so fix_up writes them like any
-         *  others once the table has an address: PREL31 in halfwords, the flag bit kept. */
-        Rel r; r.offset = (u32)(8 * k); r.sym = 0; r.type = R_C6000_PREL31; r.addend = (i32)kept[k].fn;
-        c->relocs.push_back(r);
-        if (kept[k].prel) { r.offset += 4; r.addend = (i32)kept[k].target; c->relocs.push_back(r); }
-        else wr32(&c->data[8 * k + 4], kept[k].word);
+         *  others once the table has an address: PREL31 in halfwords, the flag bit kept. Each
+         *  names the symbol it was read from, resolved then and not now (exidx_src). */
+        const ExidxEntry &e = kept[k];
+        Rel r; r.offset = (u32)(8 * k); r.type = R_C6000_PREL31;
+        r.sym = e.fsym; r.addend = e.fmod >= 0 ? e.fadd : (i32)e.fn;
+        c->relocs.push_back(r); c->exidx_src.push_back(std::make_pair(e.fmod, e.fsym));
+        if (e.prel) {
+            r.offset += 4; r.sym = e.tsym; r.addend = e.tmod >= 0 ? e.tadd : (i32)e.target;
+            c->relocs.push_back(r); c->exidx_src.push_back(std::make_pair(e.tmod, e.tsym));
+        } else wr32(&c->data[8 * k + 4], e.word);
     }
     o.parts.clear();
     if (!kept.empty()) o.parts.push_back(exidx_in);
@@ -1293,11 +1306,13 @@ bool Link::fix_up(bool check_range)
         for (size_t r = 0; r < c->relocs.size(); r++) {
             const Rel &rl = c->relocs[r];
             if (rl.offset + reloc_width(rl.type) > c->data.size()) { err = c->name + ": a relocation falls past its section"; return false; }
-            /*  A relocation of the linker's own - the unwind index it composed - names no
-             *  symbol: its addend is the address itself. */
+            /*  A relocation of the linker's own - the unwind index it composed - is against the
+             *  symbol exidx_src names, or, where that is none, its addend is the address itself. */
             u32 S = 0;
             i32 A = rl.addend;
             if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
+            if (c->exidx_synth && r < c->exidx_src.size() && c->exidx_src[r].first >= 0 &&
+                !sym_addr(c->exidx_src[r].first, c->exidx_src[r].second, S)) return false;
             /*  A far call goes to its trampoline instead. */
             int ctm, cts;
             if (rl.type == R_C6000_PCR_S21 && !c->exidx_synth && c->tramp < 0 &&
