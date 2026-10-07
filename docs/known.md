@@ -299,6 +299,24 @@ Each is a refusal, not a silent wrong answer: the linker says so and stops.
   * No `.map` file is written. `-m` is accepted and ignored - and the oracle's map is the
     readable evidence this whole bed is built on, so this is the next thing worth having.
 
+## An output section laid into a gap it did not fit, 2026-10-07
+
+**An output section went into a gap by the sum of its parts in input order, and was then laid out
+by size** - descending, each part in the first hole alignment left - which can take more. An
+odd-sized part that is word-aligned leaves a hole behind it that the parts after it cannot use, so
+the laid-out section ran past the gap and over the section after it: q39's `.const` (parts of 8,
+4, 9 and 5 bytes) fitted the 28-byte gap `.text`'s alignment left after `.fardata` by its input
+order (26 bytes) and took 32, its last word on `_c_int00`. lnk6x lays it after `.text`, by the
+size it actually takes. The same estimate decided which range an unnamed section went into.
+
+The parts are now sorted, and the layout tried at each candidate place, before the section is put
+anywhere; the gap's remainder is what the layout left, not the estimate. It is the shape RTS6x met
+on 2026-10-07 and worked round by padding NumberText.obj's word-aligned 0x1B9-byte `.const` to
+0x1BC - an odd word-aligned part is exactly what makes the two sizes differ - though the layout
+that failed there is no longer reproducible from RTS6x's tree: with the padding taken out, its 163
+test images are the same from both linkers. q38 (an odd .const before another object's local
+strings) and q39 hold it; both are lnk6x's image byte for byte, and q39 differed by 121 bytes before.
+
 ## A real program against TI's runtime, 2026-09-28
 
 Measured from C++Optimize (`tools/c6747-three`): cpp11's `hello` object, assembled by ASM6x and

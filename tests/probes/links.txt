@@ -84,3 +84,9 @@ q27-reach-back-in|reach-back-in.cmd|--ram_model|q27-reach
 q27-reach-back-out|reach-back-out.cmd|--ram_model|q27-reach
 q28-order|far.cmd|--ram_model|q28-order
 q29-later|later.cmd|--ram_model|q29-later
+; q38: an odd-sized, word-aligned .const (RTS6x's NumberText.obj had 0x1B9 bytes) laid before
+; another object's .const, whose strings are reached through local labels from .text and .fardata.
+q38-odd|flat.cmd|--ram_model|q38-odd-a q38-odd-b q38-odd-c
+; q39: .const into the gap .text's alignment leaves after .fardata: its parts take 26 bytes in
+; input order and 32 laid by size, the gap is 28, and lnk6x lays it after .text instead.
+q39-gap|flat.cmd|--ram_model|q39-gap

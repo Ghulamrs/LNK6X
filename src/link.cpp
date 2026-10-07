@@ -862,53 +862,6 @@ bool Link::allocate()
             r->used = at - r->origin;
             continue;
         }
-        if (!r) {
-            /*  A section this command file never names - q12's `.mybss`, from a `.usect` -
-             *  is allocated after the named ones, in the first range that still has room for
-             *  it. q12 puts it at 0xC0000064, after `.neardata`, in the only range there is
-             *  (the review's N12). */
-            u32 want = 0;                      /* what the parts will take, padding included */
-            for (size_t p = 0; p < o.parts.size(); p++) {
-                InSec *c = all[o.parts[p]];
-                want = align_up(want, c->align) + c->size;
-            }
-            for (size_t m = 0; m < cmd.mem.size() && !r; m++) {
-                u32 at = align_up(cmd.mem[m].origin + cmd.mem[m].used, o.align);
-                if ((at - cmd.mem[m].origin) + want <= cmd.mem[m].length) r = &cmd.mem[m];
-            }
-            if (!r) { err = o.name + ": no memory range for it"; return false; }
-            o.run = o.load = r->name;
-        }
-        /*  **An output section goes into the first gap alignment left between the ones
-         *  before it, if it fits** - lnk6x's throw probe puts its 4-byte .bss at 8000aab4,
-         *  between .const's end at 8000aab2 and .fardata's 8-aligned start at 8000aab8. */
-        u32 al = o.align;
-        for (size_t i = 0; i < cmd.secs.size(); i++)
-            if (cmd.secs[i].name == o.name && cmd.secs[i].has_align && cmd.secs[i].align > al) al = cmd.secs[i].align;
-        u32 want = 0;
-        for (size_t p = 0; p < o.parts.size(); p++) {
-            InSec *c = all[o.parts[p]];
-            want = align_up(want, c->align) + c->size;
-        }
-        if (want < o.reserve) want = o.reserve;
-        std::vector<std::pair<u32, u32> > &gap = gaps[r];
-        bool in_gap = false;
-        u32 at = 0;
-        for (size_t h = 0; h < gap.size() && !in_gap; h++) {
-            u32 s = align_up(gap[h].first, al);
-            if (s + want > gap[h].second) continue;
-            std::pair<u32, u32> was = gap[h];
-            gap.erase(gap.begin() + (long)h);
-            if (s + want < was.second) gap.insert(gap.begin() + (long)h, std::make_pair(s + want, was.second));
-            if (was.first < s) gap.insert(gap.begin() + (long)h, std::make_pair(was.first, s));
-            at = s;
-            in_gap = true;
-        }
-        if (!in_gap) {
-            u32 cur = r->origin + r->used;
-            at = align_up(cur, al);
-            if (at > cur) gap.push_back(std::make_pair(cur, at));
-        }
         /*  **lnk6x places a section's contributions in descending size**, not in the order
          *  they were read - q07's `.text` runs 0x640, 0x580, 0x4C0, 0x440, ... for the
          *  whole of the run, and its map is the evidence. A tie goes to the name - see
@@ -933,37 +886,86 @@ bool Link::allocate()
                 if (all[tramps[t].in]->out == order[k]) ps.push_back(tramps[t].in);
             o.parts.swap(ps);
         }
-        o.addr = at;
         /*  **A piece goes into the first gap alignment left behind it, if it fits** - lnk6x
          *  fills its holes. q07's .const puts two 4-byte strings at 0x905c and 0x9084, in
          *  front of 8-aligned typeinfo names, where appending left them at the end and made
-         *  the section 8 bytes longer than the oracle's. Gaps are tried lowest first. */
-        std::vector<std::pair<u32, u32> > holes;        /* [start, end) */
-        for (size_t p = 0; p < o.parts.size(); p++) {
-            InSec *c = all[o.parts[p]];
-            bool placed = false;
-            /*  Never into a hole: trampolines stay at the section's end, as every probe has them. */
-            for (size_t h = 0; h < holes.size() && !placed && c->tramp < 0; h++) {
-                u32 s = align_up(holes[h].first, c->align);
-                if (s + c->size > holes[h].second) continue;
-                std::pair<u32, u32> was = holes[h];
-                holes.erase(holes.begin() + (long)h);
-                if (s + c->size < was.second) holes.insert(holes.begin() + (long)h, std::make_pair(s + c->size, was.second));
-                if (was.first < s) holes.insert(holes.begin() + (long)h, std::make_pair(was.first, s));
-                c->addr = s;
-                placed = true;
+         *  the section 8 bytes longer than the oracle's. Gaps are tried lowest first.
+         *
+         *  **And where the parts land is asked before the section is put anywhere**, of every
+         *  place it might go: their sum in input order can be less than they take laid out. q39's
+         *  .const fitted a 28-byte gap by its input order (26), then took 32 laid by size, and its
+         *  last word went over .text's first instruction - which lnk6x lays its .const after. */
+        auto lay_out = [&](u32 base, bool commit) -> u32 {
+            u32 end = base;
+            std::vector<std::pair<u32, u32> > holes;        /* [start, end) */
+            for (size_t p = 0; p < o.parts.size(); p++) {
+                InSec *c = all[o.parts[p]];
+                bool placed = false;
+                /*  Never into a hole: trampolines stay at the section's end, as every probe has them. */
+                for (size_t h = 0; h < holes.size() && !placed && c->tramp < 0; h++) {
+                    u32 s = align_up(holes[h].first, c->align);
+                    if (s + c->size > holes[h].second) continue;
+                    std::pair<u32, u32> was = holes[h];
+                    holes.erase(holes.begin() + (long)h);
+                    if (s + c->size < was.second) holes.insert(holes.begin() + (long)h, std::make_pair(s + c->size, was.second));
+                    if (was.first < s) holes.insert(holes.begin() + (long)h, std::make_pair(was.first, s));
+                    if (commit) c->addr = s;
+                    placed = true;
+                }
+                if (!placed) {
+                    u32 s = align_up(end, c->align);
+                    if (s > end) holes.push_back(std::make_pair(end, s));
+                    if (commit) c->addr = s;
+                    end = s + c->size;
+                }
+                if (commit) c->load = c->addr;
             }
-            if (!placed) {
-                u32 s = align_up(at, c->align);
-                if (s > at) holes.push_back(std::make_pair(at, s));
-                c->addr = s;
-                at = s + c->size;
+            /*  A reservation is a floor, not an addition: .sysmem holds memory.obj's own 8 bytes
+             *  and is still exactly --heap_size in q07's reference image. */
+            if (end - base < o.reserve) end = base + o.reserve;
+            return end;
+        };
+        if (!r) {
+            /*  A section this command file never names - q12's `.mybss`, from a `.usect` -
+             *  is allocated after the named ones, in the first range that still has room for
+             *  it. q12 puts it at 0xC0000064, after `.neardata`, in the only range there is
+             *  (the review's N12). */
+            for (size_t m = 0; m < cmd.mem.size() && !r; m++) {
+                u32 at = align_up(cmd.mem[m].origin + cmd.mem[m].used, o.align);
+                if (lay_out(at, false) - cmd.mem[m].origin <= cmd.mem[m].length) r = &cmd.mem[m];
             }
-            c->load = c->addr;
+            if (!r) { err = o.name + ": no memory range for it"; return false; }
+            o.run = o.load = r->name;
         }
-        /*  A reservation is a floor, not an addition: .sysmem holds memory.obj's own 8 bytes
-         *  and is still exactly --heap_size in q07's reference image. */
-        if (at - o.addr < o.reserve) at = o.addr + o.reserve;
+        /*  **An output section goes into the first gap alignment left between the ones
+         *  before it, if it fits** - lnk6x's throw probe puts its 4-byte .bss at 8000aab4,
+         *  between .const's end at 8000aab2 and .fardata's 8-aligned start at 8000aab8. It
+         *  fits by the size its parts take laid out there, not by their sum in input order. */
+        u32 al = o.align;
+        for (size_t i = 0; i < cmd.secs.size(); i++)
+            if (cmd.secs[i].name == o.name && cmd.secs[i].has_align && cmd.secs[i].align > al) al = cmd.secs[i].align;
+        std::vector<std::pair<u32, u32> > &gap = gaps[r];
+        bool in_gap = false;
+        u32 at = 0;
+        for (size_t h = 0; h < gap.size() && !in_gap; h++) {
+            u32 s = align_up(gap[h].first, al);
+            if (s > gap[h].second) continue;
+            u32 e = lay_out(s, false);
+            if (e > gap[h].second) continue;
+            std::pair<u32, u32> was = gap[h];
+            gap.erase(gap.begin() + (long)h);
+            if (e < was.second) gap.insert(gap.begin() + (long)h, std::make_pair(e, was.second));
+            if (was.first < s) gap.insert(gap.begin() + (long)h, std::make_pair(was.first, s));
+            at = s;
+            in_gap = true;
+        }
+        if (!in_gap) {
+            u32 cur = r->origin + r->used;
+            at = align_up(cur, al);
+            if (at > cur) gap.push_back(std::make_pair(cur, at));
+        }
+        o.addr = at;
+        at = lay_out(o.addr, true);
         o.size = at - o.addr;
         if (at - r->origin > r->length) { err = o.name + ": does not fit in " + o.run; return false; }
         if (!in_gap) r->used = at - r->origin;

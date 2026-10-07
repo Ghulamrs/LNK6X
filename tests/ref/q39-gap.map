@@ -1,0 +1,100 @@
+******************************************************************************
+               TMS320C6x Linker PC v8.2.2                      
+******************************************************************************
+>> Linked Wed Oct  7 19:11:31 2026
+
+OUTPUT FILE NAME:   <q39-gap.out>
+ENTRY POINT SYMBOL: "_c_int00"  address: c00000e0
+
+
+MEMORY CONFIGURATION
+
+         name            origin    length      used     unused   attr    fill
+----------------------  --------  ---------  --------  --------  ----  --------
+  RAM                   c0000000   04000000  00000184  03fffe7c  RWIX
+
+
+SEGMENT ALLOCATION MAP
+
+run origin  load origin   length   init length attrs members
+----------  ----------- ---------- ----------- ----- -------
+c0000000    c0000000    000000c4   000000c4    r--
+  c0000000    c0000000    000000c4   000000c4    r-- .fardata
+c00000e0    c00000e0    000000c0   000000c0    r-x
+  c00000e0    c00000e0    000000a0   000000a0    r-x .text
+  c0000180    c0000180    00000020   00000020    r-- .const
+
+
+SECTION ALLOCATION MAP
+
+ output                                  attributes/
+section   page    origin      length       input sections
+--------  ----  ----------  ----------   ----------------
+.text      0    c00000e0    000000a0     
+                  c00000e0    000000a0     q39-gap.obj (.text)
+
+.const     0    c0000180    00000020     
+                  c0000180    00000009     q39-gap.obj (.const:a)
+                  c0000189    00000003     --HOLE-- [fill = 0]
+                  c000018c    00000008     q39-gap.obj (.const:b)
+                  c0000194    00000005     q39-gap.obj (.const:d)
+                  c0000199    00000003     --HOLE-- [fill = 0]
+                  c000019c    00000004     q39-gap.obj (.const:c)
+
+.fardata   0    c0000000    000000c4     
+                  c0000000    000000c4     q39-gap.obj (.fardata)
+
+.cinit     0    c0000000    00000000     UNINITIALIZED
+
+.init_array 
+*          0    c0000000    00000000     UNINITIALIZED
+
+MODULE SUMMARY
+
+       Module         code   ro data   rw data
+       ------         ----   -------   -------
+    <current directory>
+       q39-gap.obj    160    222       0      
+    +--+--------------+------+---------+---------+
+       Total:         160    222       0      
+                                              
+    +--+--------------+------+---------+---------+
+       Grand Total:   160    222       0      
+
+
+GLOBAL SYMBOLS: SORTED ALPHABETICALLY BY Name 
+
+address   name                
+-------   ----                
+00000000  __TI_STATIC_BASE    
+ffffffff  __TI_pprof_out_hndl 
+ffffffff  __TI_prof_data_size 
+ffffffff  __TI_prof_data_start
+ffffffff  __binit__           
+ffffffff  __c_args__          
+c00000e0  _c_int00            
+ffffffff  binit               
+c0000194  ka5                 
+c0000180  ka9                 
+c000018c  kb8                 
+c000019c  kc4                 
+
+
+GLOBAL SYMBOLS: SORTED BY Symbol Address 
+
+address   name                
+-------   ----                
+00000000  __TI_STATIC_BASE    
+c00000e0  _c_int00            
+c0000180  ka9                 
+c000018c  kb8                 
+c0000194  ka5                 
+c000019c  kc4                 
+ffffffff  __TI_pprof_out_hndl 
+ffffffff  __TI_prof_data_size 
+ffffffff  __TI_prof_data_start
+ffffffff  __binit__           
+ffffffff  __c_args__          
+ffffffff  binit               
+
+[12 symbols]
