@@ -21,10 +21,13 @@ mkdir -p "$OUT" || exit 1
 
 fail=0; skip=0; pass=0
 
-# A probe listed in tests/known-differ.txt may differ by up to the bytes written beside it: a
-# difference docs/known.md explains. More bytes, or an unlisted probe, still fails the bed.
-known_bytes() { sed 's/;.*//' tests/known-differ.txt 2>/dev/null | awk -v n="$1" '$1 == n { print $2 }'; }
+# A probe listed in tests/known-differ.txt may differ region by region by up to the bytes pinned
+# there (tests/regions.py): a difference docs/known.md explains. More bytes, a region no pin names,
+# or an unlisted probe still fails the bed.
+known_bytes() { sed 's/;.*//' tests/known-differ.txt 2>/dev/null | awk -v n="$1" '$1 == n { $1 = ""; print substr($0, 2) }'; }
 known=0
+PY=${PYTHON:-}
+[ -z "$PY" ] && for p in python3 python; do "$p" -c 1 >/dev/null 2>&1 && { PY=$p; break; }; done
 
 one() {
     name=$1; cmdf=$2; flags=$3; objs=$4
@@ -70,18 +73,20 @@ one() {
             printf '%-20s       matches now - take it off tests/known-differ.txt\n' "$name"; fail=$((fail+1))
         fi
     else
-        n=$(cmp -l "$OUT/$name.out" "$REF/$name.out" 2>/dev/null | wc -l | tr -d ' ')
         k=$(known_bytes "$name")
-        label=DIFF; [ -n "$k" ] && [ "$n" -le "$k" ] && label=KNOWN
-        printf '%-20s %-5s %s bytes differ (first: %s)\n' "$name" "$label" "$n" \
-               "$(cmp "$OUT/$name.out" "$REF/$name.out" 2>&1 | sed 's/.*differ: //')"
-        if [ -n "$k" ] && [ "$n" -le "$k" ]; then
-            [ "$n" -lt "$k" ] && printf '%-20s       known, and %s bytes fewer than the %s listed - lower it\n' "$name" $((k-n)) "$k"
-            known=$((known+1))
-        else
-            [ -n "$k" ] && printf '%-20s       listed as known at %s bytes, and it is now %s\n' "$name" "$k" "$n"
-            fail=$((fail+1))
+        if [ -z "$k" ]; then
+            printf '%-20s DIFF  %s\n' "$name" "$(${PY:-false} tests/regions.py "$OUT/$name.out" "$REF/$name.out" 2>/dev/null ||
+                cmp "$OUT/$name.out" "$REF/$name.out" 2>&1)"
+            fail=$((fail+1)); return
         fi
+        [ -n "$PY" ] || { printf '%-20s FAIL  pinned by region, and no python to count them\n' "$name"; fail=$((fail+1)); return; }
+        # shellcheck disable=SC2086 - the pins are words, one region each
+        verdict=$("$PY" tests/regions.py "$OUT/$name.out" "$REF/$name.out" $k); rc=$?
+        case $rc in
+        0) printf '%-20s KNOWN %s\n' "$name" "$verdict"; known=$((known+1)) ;;
+        3) printf '%-20s KNOWN within its pins, some lower now - lower them: %s\n' "$name" "$verdict"; known=$((known+1)) ;;
+        *) printf '%-20s DIFF  %s\n' "$name" "$verdict"; fail=$((fail+1)) ;;
+        esac
     fi
 }
 
