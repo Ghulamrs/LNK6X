@@ -481,7 +481,7 @@ EXIDX_CANTUNWIND entries, `.cinit` and the rest - and the program headers match.
 | `shdrs`, `elf-header` | 388, 8 | the section count and offsets those sections move |
 | `.shstrtab` | 182 | the debug sections' names |
 | `.c6xabi.attributes` | 37 | the attributes blob |
-| `.TI.section.flags` | 4 | lnk6x's table of flags for the sections it writes |
+| `.TI.section.flags` | 4 | the section is 0x1A bytes here and 0x1C in lnk6x's image |
 
 So the unwind-index half of the review's fix was already done (2026-10-03), and the other half is
 done here: `tests/known-differ.txt` pins each region, and a region no pin names must not differ
