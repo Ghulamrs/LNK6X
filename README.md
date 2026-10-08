@@ -37,10 +37,12 @@ The test is the comparison: each probe is linked again from the objects in `test
 image is held against lnk6x's, byte for byte. A TI image carries no time stamp and no build
 path, so nothing has to be pinned first - the two files either agree or they do not.
 
-Nineteen of the twenty-five agree today, and the six that link TI's runtime or its .cinit
-differ by a pinned count each, in the unwind index, the attributes blob and the symbol table
-(`tests/known-differ.txt`, and docs/known.md for each). The runtime library the bed links is
-checked in under `tests/ref`. One run of
+Fifty-four of the seventy-six agree today (2026-10-08, on the Windows box), and the twenty-two
+that link TI's runtime are pinned region by region in `tests/known-differ.txt`: the attributes
+blob, `.TI.section.flags`, the symbol table and its strings, lnk6x's DWARF, and the ELF and section
+headers that count those - and in no loaded section, the unwind index included, which a region
+no pin names would fail at once (`tests/regions.py`, docs/known.md). The runtime library the bed
+links is TI's and is not checked in (`.gitignore`); one run of
 
     sh tests/probes.sh
 

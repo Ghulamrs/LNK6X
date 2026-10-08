@@ -346,7 +346,8 @@ of 16. What it took, each read off the oracle's map or bytes:
   * **`binit`/`__binit__` stay 0xFFFFFFFF**, and the four `.cinit` table names are set before
     fix_up, not after it: `_auto_init_elf` had been patched with .cinit's start for both bases.
 
-**Still different from lnk6x, and why q07 is 15 of 16:** the index has no linker-made
+**Still different from lnk6x, and why q07 is 15 of 16** (superseded 2026-10-03: the
+linker-made entries match - see "Re-pinned by region" below): the index has no linker-made
 entries - lnk6x adds an EXIDX_CANTUNWIND for kept code with no entry of its own and merges
 adjacent ones (42 entries against 37 here). It changes nothing for a program that does not
 throw through such code. `tests/known-differ.txt` was re-pinned on 2026-09-29 (below).
@@ -378,7 +379,7 @@ oracle's address and size, but for isort's `.cinit` and the index behind it, 8 b
 
 **What still differs, all measured and none of it running code:**
 
-  * two words of `.text`, `_Z16find_et_setup_pr` and `__TI_ut_entry_cmp` loading the unwind
+  * ~~two words of `.text`~~ - **matched since 2026-10-03** (below): `_Z16find_et_setup_pr` and `__TI_ut_entry_cmp` loading the unwind
     table's end, which moves with the linker-made EXIDX_CANTUNWIND entries this linker does
     not write - 0x1D0 against 0x170 bytes of index in fib;
   * ~~isort's `.cinit` 4 bytes short~~ - **mended 2026-09-30**: the handler table goes among
@@ -463,6 +464,30 @@ image and breaks the C image, the hash kernel or q34, and is not taken. It costs
 runs: the cbs image takes lnk6x 7.4.4's own 99,851 cycles, and a C++ case with static
 constructors and destructors (C++Optimize tools/c6747/ctor, through tools/c6747-levels) prints
 clang's output on TI's simulator linked by both linkers, in identical cycles.
+
+## Re-pinned by region, 2026-10-08
+
+**The review of 2026-10-08 (S5, V11) said the pins covered the region where the 06-10 defect
+lived** - a whole-image count of 3,001 to 32,774 bytes, the unwind index inside it, so a change
+there could hide among the symbol table's bytes. Measured on the Windows box with
+`tests/regions.py`, region by region, for all twenty-two runtime probes under 8.2.2 and 7.4.4:
+**no loaded section differs in any of them - `.text`, `.c6xabi.exidx` with its linker-made
+EXIDX_CANTUNWIND entries, `.cinit` and the rest - and the program headers match.** What differs:
+
+| region | bytes, q07-lib (8.2.2) | why |
+| --- | --- | --- |
+| `.debug_*` | 176,996 | lnk6x carries the runtime's DWARF into the image; this linker writes none |
+| `.symtab`, `.strtab` | 21,938, 17,387 | the symbol set and its order (above) |
+| `shdrs`, `elf-header` | 388, 8 | the section count and offsets those sections move |
+| `.shstrtab` | 182 | the debug sections' names |
+| `.c6xabi.attributes` | 37 | the attributes blob |
+| `.TI.section.flags` | 4 | lnk6x's table of flags for the sections it writes |
+
+So the unwind-index half of the review's fix was already done (2026-10-03), and the other half is
+done here: `tests/known-differ.txt` pins each region, and a region no pin names must not differ
+at all. Proved the way that matters: one bit flipped in q07's `.c6xabi.exidx`, and again in its
+`.text`, and `regions.py` fails each as "unpinned". The bed reads 54 matched, 22 known, 0
+differed, and `bad.sh` says what it should. No source changed; the linker stays 1.1.
 
 ## Things that are this linker's own
 

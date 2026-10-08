@@ -1,36 +1,34 @@
-; Probes the bed lets differ, by at most the bytes given - each difference is in docs/known.md.
-; run.sh fails a probe that differs by more, and one listed here that matches: take it off then.
-; `refused` in place of a count: lnk6x links it, and this linker must refuse it by name.
-; Re-pinned 2026-09-29: the four runtime probes are laid out as the oracle's now and differ in
-; the unwind index, the attributes blob and the symbol table, and in nothing that runs.
-q05-model-rom    3007   ; the attributes blob and the symbol table
-q07-lib         31131   ; two words naming the unwind table's end, the index without linker-made entries, attributes, symbols
-q16-ride         3001   ; the attributes blob and the symbol table
-q17-pcr-here    31131   ; as q07
-q17-pcr-moved   31285   ; as q07, linked 0x1234000 higher
-q18-cinit       31261   ; as q07
-; Re-pinned 2026-09-30: the runtime probes rose when section symbols took lnk6x's names
-; (.text:_c_int00 for .text) - .strtab is longer and every offset after the first such name
-; moves. Their symbol *set* is nearer lnk6x's (q07: 147 of ours not in lnk6x's image before,
-; 23 after), the bytes cmp counts are not. Every far-call probe, 8.2.2 and 7.4.4, matches.
-q30-initarray   31241   ; as q07: the two unwind-table words, attributes, symbols (03-10)
-; Re-pinned 2026-10-03: archive members taken in one pass in archive order, as lnk6x does,
-; moves the symbol table; q05 and q16 rose by that, the runtime probes fell. New: q30-q36 under
-; both linkers - every loaded section matches; the segment table and the symbols do not.
-q30-initarray-ram      30247   ; attributes and symbols - every loaded section and the segment table match
-q31-zero-small         31243   ; attributes and symbols - every loaded section and the segment table match
-q32-zero-far           31277   ; attributes and symbols - every loaded section and the segment table match
-q33-zero-big           31287   ; attributes and symbols - every loaded section and the segment table match
-q35-initarray-two      31303   ; attributes and symbols - every loaded section and the segment table match
-q35-initarray-rev      31377   ; attributes and symbols - every loaded section and the segment table match
-q36-initarray-sub      31228   ; attributes and symbols - every loaded section and the segment table match
-q07-lib-744            32311   ; attributes and symbols - every loaded section and the segment table match
-q30-initarray-744      32366   ; attributes and symbols - every loaded section and the segment table match
-q31-zero-small-744     32664   ; attributes and symbols - every loaded section and the segment table match
-q32-zero-far-744       32708   ; attributes and symbols - every loaded section and the segment table match
-q33-zero-big-744       32774   ; attributes and symbols - every loaded section and the segment table match
-q35-initarray-two-744  32425   ; attributes and symbols - every loaded section and the segment table match
-q35-initarray-rev-744  32583   ; attributes and symbols - every loaded section and the segment table match
-q36-initarray-sub-744  32344   ; attributes and symbols - every loaded section and the segment table match
-; Re-pinned 2026-10-03 again: segments are lnk6x's runs now (docs/known.md) - every image in
-; the bed has lnk6x's segment table, and what each still differs in is the symbols and attributes.
+; Probes the bed lets differ - each difference is in docs/known.md - pinned region by region.
+; A pin is region=bytes: a section by name, or elf-header, phdrs or shdrs, the region a glob
+; (.debug_* sums lnk6x's DWARF, which this linker does not write). tests/regions.py counts each;
+; run.sh fails a probe over a pin or differing in a region no pin names - so .text, the unwind
+; index or any loaded section that moves fails at once - and one listed here that matches.
+; `refused` in place of the pins: lnk6x links it, and this linker must refuse it by name.
+;
+; Re-pinned 2026-10-08 (review of 2026-10-08, S5/V11), from one whole-image count each: on the box
+; every runtime probe, 8.2.2 and 7.4.4, differs in no loaded section - .c6xabi.exidx and its
+; linker-made EXIDX_CANTUNWIND entries included - and the segment table matches. What differs is
+; the attributes blob, .TI.section.flags, the symbol table and its strings, lnk6x's DWARF, and the
+; ELF and section headers that count and place those sections.
+q05-model-rom          elf-header=6 shdrs=360 .c6xabi.attributes=5 .symtab=1573 .strtab=934 .shstrtab=169 .debug_*=11748
+q07-lib                elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21938 .TI.section.flags=4 .strtab=17387 .shstrtab=182 .debug_*=176996
+q16-ride               elf-header=6 shdrs=360 .c6xabi.attributes=5 .symtab=1594 .strtab=966 .shstrtab=169 .debug_*=11748
+q17-pcr-here           elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21938 .TI.section.flags=4 .strtab=17387 .shstrtab=182 .debug_*=176996
+q17-pcr-moved          elf-header=8 shdrs=389 .c6xabi.attributes=37 .symtab=22416 .TI.section.flags=4 .strtab=17387 .shstrtab=182 .debug_*=176996
+q18-cinit              elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21957 .TI.section.flags=4 .strtab=17408 .shstrtab=182 .debug_*=176996
+q30-initarray          elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21944 .TI.section.flags=4 .strtab=17370 .shstrtab=182 .debug_*=176996
+q30-initarray-ram      elf-header=8 shdrs=387 .c6xabi.attributes=37 .symtab=21023 .TI.section.flags=4 .strtab=16755 .shstrtab=182 .debug_*=167093
+q31-zero-small         elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21945 .TI.section.flags=4 .strtab=17405 .shstrtab=182 .debug_*=176996
+q32-zero-far           elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21947 .TI.section.flags=4 .strtab=17407 .shstrtab=182 .debug_*=176996
+q33-zero-big           elf-header=8 shdrs=390 .c6xabi.attributes=37 .symtab=22415 .TI.section.flags=4 .strtab=17405 .shstrtab=182 .debug_*=176996
+q35-initarray-two      elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21996 .TI.section.flags=4 .strtab=17397 .shstrtab=182 .debug_*=176996
+q35-initarray-rev      elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=22065 .TI.section.flags=4 .strtab=17469 .shstrtab=182 .debug_*=176996
+q36-initarray-sub      elf-header=8 shdrs=388 .c6xabi.attributes=37 .symtab=21946 .TI.section.flags=4 .strtab=17401 .shstrtab=182 .debug_*=176996
+q07-lib-744            elf-header=6 shdrs=340 .c6xabi.attributes=37 .symtab=20498 .TI.section.flags=4 .strtab=20295 .shstrtab=162 .debug_*=184946
+q30-initarray-744      elf-header=6 shdrs=340 .c6xabi.attributes=37 .symtab=20500 .TI.section.flags=4 .strtab=20291 .shstrtab=162 .debug_*=184946
+q31-zero-small-744     elf-header=8 shdrs=340 .c6xabi.attributes=37 .symtab=20676 .TI.section.flags=4 .strtab=20554 .shstrtab=162 .debug_*=186720
+q32-zero-far-744       elf-header=8 shdrs=338 .c6xabi.attributes=37 .symtab=20685 .TI.section.flags=4 .strtab=20554 .shstrtab=162 .debug_*=186720
+q33-zero-big-744       elf-header=8 shdrs=341 .c6xabi.attributes=37 .symtab=21071 .TI.section.flags=4 .strtab=20554 .shstrtab=162 .debug_*=186720
+q35-initarray-two-744  elf-header=6 shdrs=338 .c6xabi.attributes=37 .symtab=20557 .TI.section.flags=4 .strtab=20232 .shstrtab=162 .debug_*=184946
+q35-initarray-rev-744  elf-header=6 shdrs=342 .c6xabi.attributes=37 .symtab=20617 .TI.section.flags=4 .strtab=20404 .shstrtab=162 .debug_*=184946
+q36-initarray-sub-744  elf-header=7 shdrs=340 .c6xabi.attributes=37 .symtab=20494 .TI.section.flags=4 .strtab=20314 .shstrtab=162 .debug_*=184946
