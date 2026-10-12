@@ -19,7 +19,7 @@
 # it into the same assembly), .s as written.
 set -u
 cd "$(dirname "$0")/.." || exit 1
-BIN=$(cd "${BIN:-../RIDE/bin}" && pwd)
+BIN=$(cd "${BIN:-../../RIDE/bin}" && pwd)
 CC1I=${CC1I:-$BIN/c90.exe}; CXX1I=${CXX1I:-$BIN/cpp11.exe}; SHCI=${SHCI:-$BIN/shalimar.exe}
 SHMRT=${SHMRT:-$BIN/lib/shmrt-tms6747}
 BOX=${BOX:-windows}
