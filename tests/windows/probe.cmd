@@ -8,7 +8,7 @@ setlocal enabledelayedexpansion
 if "%~1"==":shard" goto :shard
 if "%~1"=="" (echo probe.cmd: needs the tree root & exit /b 2)
 rem  CCS 7.4 on the box: the C6000 code generation tools, and the runtime built as
-rem  VM6747/Emulator/tests/ti.sh says. Override either by setting it before calling.
+rem  VM6747/tests/ti.sh says. Override either by setting it before calling.
 if "%CGT%"=="" set CGT=C:\ti\ccsv7\tools\compiler\ti-cgt-c6000_8.2.2\bin
 if "%TILIB%"=="" set TILIB=C:\Users\GRA\Documents\VM6747\tilib
 set PATH=%CGT%;%PATH%
