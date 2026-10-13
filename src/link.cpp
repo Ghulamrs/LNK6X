@@ -179,6 +179,7 @@ bool Link::read_inputs()
         if (!elf_read(b.empty() ? (const u8 *)"" : &b[0], b.size(), basename_of(path), m, err)) return false;
         mods.push_back(m);
     }
+    cmdMods = mods.size();
     for (size_t mi = 0; mi < mods.size(); mi++) if (!take_module((int)mi)) return false;
     if (libs.empty()) { add_linker_symbols(); return true; }
 
@@ -660,6 +661,65 @@ bool Link::build_sections()
         }
     }
 
+    /*  **.debug_line is carried, not allocated** - as lnk6x carries every input's into the image
+     *  (t.out, 7.4.4: 13,968 bytes, boot.c's unit first), concatenated in input order with the
+     *  DW_LNE_set_address relocations applied against the final addresses, so a debugger on the
+     *  image (sim6747 --run --debug) stops on a source line. It takes no memory, no segment and
+     *  no address: its bytes follow the loaded sections in the file. Elimination is not asked -
+     *  the units of a dropped section relocate to 0, and no row of theirs is ever reached. */
+    /*  **Only where an object on the command line carries one.** lnk6x carries the runtime's
+     *  DWARF into every image, debug build or not, and keeps or drops its compile units by a
+     *  reachability over .debug_info that this linker does not model - so an image built from
+     *  objects without a line table stays exactly as it was (the bed's references, the referee's
+     *  images), and a -g build carries every unit whose own code is in the image, a grouped
+     *  (header-file) unit once per group signature. docs/known.md names the residue. */
+    bool anyLines = false;
+    for (size_t mi = 0; mi < cmdMods && mi < mods.size() && !anyLines; mi++)
+        for (size_t si = 1; si < mods[mi].secs.size() && !anyLines; si++) {
+            const InSec &c = mods[mi].secs[si];
+            anyLines = !(c.flags & SHF_ALLOC) && c.type == SHT_PROGBITS && c.name == ".debug_line" && c.size != 0;
+        }
+    std::map<std::string, bool> dwGroups;
+    for (size_t mi = 0; mi < mods.size() && anyLines; mi++) {
+        std::map<u32, std::string> signature;         /* a group member's section index -> the group's name */
+        for (size_t si = 1; si < mods[mi].secs.size(); si++) {
+            const InSec &g = mods[mi].secs[si];
+            if (g.type != 17 || g.data.size() < 8) continue;        /* SHT_GROUP: flags, then the members */
+            for (size_t k = 4; k + 4 <= g.data.size(); k += 4)
+                signature[rd32(&g.data[k])] = g.name;
+        }
+        for (size_t si = 1; si < mods[mi].secs.size(); si++) {
+            InSec &c = mods[mi].secs[si];
+            if ((c.flags & SHF_ALLOC) || c.type != SHT_PROGBITS || c.name != ".debug_line" || c.size == 0) continue;
+            if (c.flags & SHF_GROUP) {
+                std::map<u32, std::string>::const_iterator sg = signature.find((u32)si);
+                const std::string key = sg == signature.end() ? c.name : sg->second;
+                if (dwGroups[key]) continue;
+                dwGroups[key] = true;
+            }
+            bool dead = false;                            /* its code was never pulled, or was eliminated */
+            for (size_t r = 0; r < c.relocs.size() && !dead; r++) {
+                const Sym &y = mods[mi].syms[c.relocs[r].sym];
+                if (y.shndx == SHN_ABS || y.shndx == SHN_UNDEF) continue;
+                dead = y.shndx >= mods[mi].secs.size() || !mods[mi].secs[y.shndx].live || mods[mi].secs[y.shndx].out < 0;
+            }
+            if (dead) continue;
+            int oi = out_index(".debug_line");
+            if (oi < 0) {
+                OutSec o;
+                o.name = ".debug_line"; o.flags = 0; o.entsize = 0;
+                o.type = SHT_PROGBITS; o.addr = 0; o.size = 0; o.align = 1; o.offset = 0;
+                o.pflags = 0; o.progbits = true; o.debug = true;
+                outs.push_back(o);
+                oi = (int)outs.size() - 1;
+            }
+            c.out = oi;
+            c.live = true;
+            outs[oi].parts.push_back((int)all.size());
+            all.push_back(&c);
+        }
+    }
+
     /*  A `{ *(.text:early) *(.text) *(.text:*) }` list is an order, not decoration: the parts
      *  that a pattern names come first, in the order the patterns were written, and whatever
      *  the list does not name keeps the order it was read in after them. */
@@ -680,6 +740,7 @@ bool Link::build_sections()
 
     for (size_t i = 0; i < outs.size(); i++) {
         OutSec &o = outs[i];
+        if (o.debug) continue;
         for (size_t k = 0; k < o.parts.size(); k++) {
             InSec *c = all[o.parts[k]];
             if (c->align > o.align) o.align = c->align;
@@ -798,6 +859,12 @@ bool Link::allocate()
     std::vector<std::pair<u32, int> > rest;      /* -size, so a sort puts the big first */
     std::vector<int> held, unnamed;
     for (size_t i = 0; i < outs.size(); i++) {
+        if (outs[i].debug) {                      /* carried, not allocated: its parts one after another from 0 */
+            u32 at = 0;
+            for (size_t p = 0; p < outs[i].parts.size(); p++) { InSec *c = all[outs[i].parts[p]]; c->addr = c->load = at; at += c->size; }
+            outs[i].addr = 0; outs[i].size = at; outs[i].rank = 1 << 30;
+            continue;
+        }
         /*  A section the command file never names comes after every one it does, whatever
          *  its size - q12's `.mybss` is 0x20 and still follows `.neardata` at 4 (N12). */
         if (outs[i].unnamed) { unnamed.push_back((int)i); continue; }
@@ -1312,7 +1379,10 @@ bool Link::fix_up(bool check_range)
              *  symbol exidx_src names, or, where that is none, its addend is the address itself. */
             u32 S = 0;
             i32 A = rl.addend;
-            if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) return false;
+            if (!c->exidx_synth && !sym_addr(c->module, rl.sym, S)) {
+                if (!outs[c->out].debug) return false;
+                S = 0; err.clear();                  /* a line-table row of a section that was eliminated */
+            }
             if (c->exidx_synth && r < c->exidx_src.size() && c->exidx_src[r].first >= 0 &&
                 !sym_addr(c->exidx_src[r].first, c->exidx_src[r].second, S)) return false;
             /*  A far call goes to its trampoline instead. */
