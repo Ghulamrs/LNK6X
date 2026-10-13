@@ -33,7 +33,8 @@ $(OBJDIR)/%.o: src/%.cpp
 test: $(TARGET)
 	@LNK=$(TARGET) sh tests/run.sh; r=$$?; echo; \
 	 LNK=$(TARGET) sh tests/bad.sh; b=$$?; \
-	 [ $$r -eq 0 ] && [ $$b -eq 0 ]
+	 LNK=$(TARGET) sh tests/debug-line.sh; d=$$?; \
+	 [ $$r -eq 0 ] && [ $$b -eq 0 ] && [ $$d -eq 0 ]
 
 clean:
 	rm -rf $(OBJDIR) $(TARGET)

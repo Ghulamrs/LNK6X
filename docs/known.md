@@ -476,7 +476,7 @@ EXIDX_CANTUNWIND entries, `.cinit` and the rest - and the program headers match.
 
 | region | bytes, q07-lib (8.2.2) | why |
 | --- | --- | --- |
-| `.debug_*` | 176,996 | lnk6x carries the runtime's DWARF into the image; this linker writes none |
+| `.debug_*` | 176,996 | lnk6x carries the runtime's DWARF into the image; this linker carries `.debug_line` alone, and only when an object on the command line has one (2026-10-13, below) |
 | `.symtab`, `.strtab` | 21,938, 17,387 | the symbol set and its order (above) |
 | `shdrs`, `elf-header` | 388, 8 | the section count and offsets those sections move |
 | `.shstrtab` | 182 | the debug sections' names |
@@ -493,3 +493,29 @@ differed, and `bad.sh` says what it should. No source changed; the linker stays 
 
 Nothing. There is no equivalent here of LINK's `/timestamp:`, because a TI image carries no
 time of day to pin.
+
+## `.debug_line`, carried since 2026-10-13, and how it differs from lnk6x's
+
+A `.debug_line` input (ASM6x builds one from cpp11 -g's `.dwpsn`; cl6x -g's objects carry several, one per
+compile unit, the header-file ones in ELF groups) is concatenated into an output `.debug_line` - flags 0,
+address 0, no segment, its bytes after the loaded sections - with its `DW_LNE_set_address` relocations
+(R_C6000_ABS32 against the code section) applied against the final addresses, so `sim6747 --run --debug`
+stops on a source line of the image. Measured on lnk6x 7.4.4 linking cl6x 8.2.2's -g `t.obj`: the same
+rows, the same relocation rule. Two things lnk6x does that this linker does not:
+
+- **lnk6x carries the runtime's DWARF into every image**, debug build or not (q05-model-rom's reference:
+  1,162 bytes of `.debug_line` from four members of rts6740, and seven other `.debug_*` sections); this
+  linker carries `.debug_line` only when an object on the command line has one, so every image of the bed
+  and of the referee - built from objects without a line table - is byte-identical to what it was.
+- **lnk6x keeps or drops a compile unit by a reachability over `.debug_info`** - a unit whose code was not
+  pulled goes, and so does one nothing references (memcpy64's base-types unit), while one another kept
+  unit refers to stays (memset's) - and orders the units with the runtime's first. This linker keeps every
+  unit whose own relocations name code that is in the image, a grouped unit once per group signature, in
+  module order; a unit of code that was eliminated relocates to 0. The difference is units no debugger
+  reaches, and the image is some hundred bytes longer than lnk6x's for the same -g inputs (t.obj against
+  rts6740: 24,941 bytes of `.debug_line` where lnk6x writes 13,968).
+
+TI's own debugger (DSS on the C6747 simulator) resolves a source line through `.debug_info`'s compile
+units, not `.debug_line` alone: `breakpoint.add("p.cpp", 18)` on this linker's image answers "No code is
+associated with p.cpp line 18 in any loaded symbols" (Linux box, 2026-10-13). The image loads and runs there
+as before - 49,899 cycles, main's status in A4, on both boxes - and sim6747 is the debugger that reads it.

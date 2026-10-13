@@ -130,6 +130,8 @@ bool Link::write_image()
         if (o.type == SHT_PROGBITS) pos += o.size;
     }
     for (size_t k = 0; k < empty.size(); k++) outs[empty[k]].offset = pos;
+    for (u32 i = 0; i < nout; i++)                   /* .debug_line: after the loaded sections, no segment */
+        if (outs[i].debug && outs[i].size) { outs[i].offset = pos; pos += outs[i].size; }
 
     /*  Nothing with bytes may be left without an offset. Before N3 was found, a section whose
      *  flags said it was not allocated kept offset 0 and its bytes were copied over the ELF

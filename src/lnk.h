@@ -184,6 +184,7 @@ struct OutSec {
     std::vector<int> parts;      /* indices into Link::all, in allocation order */
     bool progbits;               /* a fill makes an empty section initialised */
     bool unnamed = false;        /* the command file does not name it: laid after all it does */
+    bool debug = false;          /* .debug_line: not allocated, no address, carried into the file after the loaded sections */
     int  rank = -1;              /* its place in the last allocation order */
     std::string load, run;
     OutSec() : type(SHT_NOBITS), flags(0), addr(0), size(0), align(1), entsize(0), offset(0),
@@ -235,6 +236,7 @@ struct Link {
     std::vector<Seg>     segs;
     std::map<std::string, std::pair<int, int> > defined;   /* name -> module, symbol */
     std::map<std::string, bool> groups;   /* group section names already taken, by the first */
+    size_t cmdMods = 0;                   /* the command line's objects: mods[0..cmdMods) - the rest came out of archives */
     u32 entry_addr, static_base;
     int lnk_mod;                 /* the module holding the names the linker defines, or -1 */
     std::string err;
