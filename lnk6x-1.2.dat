@@ -1,15 +1,15 @@
 ©2026 G. R. Akhtar - lnk6x, a TMS320C6000 linker
-Release seal, version 1.1, sealed 13-10-2026
+Release seal, version 1.2, sealed 13-10-2026
 Written by tools/seal; check it with `tools/seal check`.
-CRC32  size  file - 8 files, seal 1D45D6CE
+CRC32  size  file - 8 files, seal F1F52AED
 ------------------------------------------------------------------
 63ADB698      4998  src/archive.cpp
 92BC0599     10419  src/cmd.cpp
 ECDC151E      5975  src/elf.cpp
-7D2E1872     20517  src/image.cpp
-52D951D3     87621  src/link.cpp
-AB5D1292     17335  src/lnk.h
-B505F544      8324  src/main.cpp
+5F6B5FC7     20717  src/image.cpp
+75B45DD1     91868  src/link.cpp
+C1CE31DC     17587  src/lnk.h
+D92DC17F      8324  src/main.cpp
 2B6FB380      9280  src/reloc.cpp
 ------------------------------------------------------------------
 Sealed on 13-10-2026
